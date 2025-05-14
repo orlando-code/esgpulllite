@@ -360,12 +360,21 @@ class Esgpull:
         queue: list[File],
         use_db: bool = True,
         show_progress: bool = True,
+        subset_criteria: dict[str, Any] = None,  # New parameter for filtering
     ) -> tuple[list[File], list[Err]]:
         """
-        Download files provided in `queue`.
+        Download files provided in `queue`, optionally filtering by subset criteria.
         """
+        if subset_criteria:
+            # Filter the queue based on subset criteria
+            queue = [
+                file for file in queue
+                if all(getattr(file, key, None) == value for key, value in subset_criteria.items())
+            ]
+
         for file in queue:
             file.status = FileStatus.Starting
+
         main_progress = self.ui.make_progress(
             SpinnerColumn(),
             MofNCompleteColumn(),

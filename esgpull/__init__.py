@@ -2,6 +2,7 @@ from esgpull.context import Context
 from esgpull.esgpull import Esgpull
 from esgpull.models import File, Query
 from esgpull.version import __version__
+from esgpull.api import EsgpullAPI
 
 __all__ = [
     "Context",
@@ -9,4 +10,5 @@ __all__ = [
     "File",
     "Query",
     "__version__",
+    "EsgpullAPI",
 ]

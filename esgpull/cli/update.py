@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+import json
 
 import click
 from click.exceptions import Abort, Exit
@@ -33,6 +34,7 @@ class QueryFiles:
 @opts.yes
 @opts.record
 @opts.verbosity
+@click.option('--subset-criteria', type=str, help='Subset criteria for filtering files (JSON format).')
 def update(
     query_id: str | None,
     tag: str | None,
@@ -40,11 +42,13 @@ def update(
     yes: bool,
     record: bool,
     verbosity: Verbosity,
+    subset_criteria: str | None,
 ) -> None:
     """
     Fetch files, link files <-> queries, send files to download queue
     """
     esg = init_esgpull(verbosity, record=record)
+    subset_criteria_dict = json.loads(subset_criteria) if subset_criteria else None
     with esg.ui.logging("update", onraise=Abort):
         # Select which queries to update + setup
         if query_id is None and tag is None:
@@ -146,6 +150,10 @@ def update(
             new_files: list[File] = []
             for file in qf.files:
                 if file.sha not in shas:
+                    if subset_criteria_dict and not all(
+                        getattr(file, key, None) == value for key, value in subset_criteria_dict.items()
+                    ):
+                        continue
                     new_files.append(file)
             nb_files = len(new_files)
             if not qf.query.tracked:

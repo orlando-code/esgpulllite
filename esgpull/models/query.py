@@ -44,12 +44,14 @@ query_file_proxy = sa.Table(
     Base.metadata,
     sa.Column("query_sha", Sha, sa.ForeignKey("query.sha"), primary_key=True),
     sa.Column("file_sha", Sha, sa.ForeignKey("file.sha"), primary_key=True),
+    extend_existing=True,
 )
 query_tag_proxy = sa.Table(
     "query_tag",
     Base.metadata,
     sa.Column("query_sha", Sha, sa.ForeignKey("query.sha"), primary_key=True),
     sa.Column("tag_sha", Sha, sa.ForeignKey("tag.sha"), primary_key=True),
+    extend_existing=True,
 )
 
 
@@ -183,13 +185,13 @@ class Query(Base):
         sa.ForeignKey("options.sha"),
         init=False,
     )
-    options: Mapped[Options] = relationship(default_factory=Options)
-    selection_sha: Mapped[int] = mapped_column(
+    options: Mapped[Options] = relationship(default_factory=Options, cascade="all")
+    selection_sha: Mapped[str] = mapped_column(
         Sha,
         sa.ForeignKey("selection.sha"),
         init=False,
     )
-    selection: Mapped[Selection] = relationship(default_factory=Selection)
+    selection: Mapped[Selection] = relationship(default_factory=Selection, cascade="all")
     files: Mapped[list[File]] = relationship(
         secondary=query_file_proxy,
         default_factory=list,
@@ -288,14 +290,22 @@ class Query(Base):
         return count, size or 0
 
     def _as_bytes(self) -> bytes:
-        self_tuple = (self.require, self.options.sha, self.selection.sha)
-        return str(self_tuple).encode()
+        data_parts: list[bytes] = []
+        data_parts.append(str(self.tracked).encode())
+        data_parts.append(str(self.require or "").encode())
+        data_parts.append(str(self.options_sha or "").encode())
+        data_parts.append(str(self.selection_sha or "").encode())
+        return b"".join(data_parts)
 
     def compute_sha(self) -> None:
-        for tag in self.tags:
-            tag.compute_sha()
-        self.options.compute_sha()
-        self.selection.compute_sha()
+        if self.options is not None:
+            self.options.compute_sha()
+            self.options_sha = self.options.sha
+
+        if self.selection is not None:
+            self.selection.compute_sha()
+            self.selection_sha = self.selection.sha
+
         super().compute_sha()
 
     @property
@@ -307,7 +317,6 @@ class Query(Base):
 
     @property
     def name(self) -> str:
-        # TODO: make these 2 lines useless
         if self.sha is None:
             self.compute_sha()
         elif ":" in self.sha:
@@ -402,8 +411,6 @@ class Query(Base):
 
     def __lshift__(self, child: Query) -> Query:
         result = self.clone(compute_sha=False)
-        # if self.name != child.require:
-        #     raise ValueError(f"{self.name} is not required by {child.name}")
         for tag in child.tags:
             if tag not in result.tags:
                 result.tags.append(tag)
