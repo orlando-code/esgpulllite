@@ -1,10 +1,6 @@
 # esgpull - ESGF data management utility
 
-[![Rye](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/rye/main/artwork/badge.json)](https://rye.astral.sh)
-
-`esgpull` is a tool that simplifies usage of the [ESGF Search API](https://esgf.github.io/esg-search/ESGF_Search_RESTful_API.html) for data discovery, and manages procedures related to downloading and storing files from ESGF.
-
-**NOTE**
+## NOTE
 This repository represents a fork from the original which introduces the following functionality:
 - Files are subsetted before downloading (via server-side `dask` lazy loading and `xarray`) to save local memory/increase download speeds
 - Files are automatically regridded to a regular global grid (between -180 and 180º longitude, -90 and 90º latitude) via `xesmf`
@@ -12,6 +8,11 @@ This repository represents a fork from the original which introduces the followi
 In the process, much of the fancy download tracking etc. of the (excellent) original `esgpull` package are bypassed. While future work may add this, it's neither my priority, nor the priority of the `esgpull` maintainers!
 
 Please feel free to get in touch via [my website](https://orlando-code.github.io/) or an issue if you have any questions/criticisms!
+
+[![Rye](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/rye/main/artwork/badge.json)](https://rye.astral.sh)
+
+`esgpull` is a tool that simplifies usage of the [ESGF Search API](https://esgf.github.io/esg-search/ESGF_Search_RESTful_API.html) for data discovery, and manages procedures related to downloading and storing files from ESGF.
+
 
 ```py
 from esgpull import Esgpull, Query
