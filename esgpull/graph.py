@@ -94,8 +94,9 @@ class Graph:
 
     def get(self, name: str) -> Query:
         sha = self._expand_name(name, self._shas, self._name_sha)
+        # sha = list(self._shas)[0]
         if sha in self.queries:
-            ...
+            ... # equivalent to pass
         elif sha in self._shas:
             query_db = self.db.get(Query, sha)
             if query_db is not None:
@@ -342,22 +343,60 @@ class Graph:
 
     def merge(self) -> Mapping[str, Query]:
         """
-        Try to load instances from database into self.db.
+        Merges the current graph's queries with the database.
 
-        Start with tags, since they are not part of query.sha,
-        and there could be new tags to add to an existing query.
-        Those new tags need to be merged before adding them to an
-        existing query instance from database (autoflush mess).
+        This method synchronizes the queries held in the `Graph` instance
+        with the persistent storage in the database. It performs the following
+        actions:
+        1. Iterates through all queries currently in the `Graph` instance.
+        2. For each query, it attempts to merge it with the corresponding
+           entry in the database. If the query in the graph is different
+           from the one in the database (e.g., due to local modifications),
+           the database version is updated or the local version is replaced
+           by the database version, depending on the `db.merge` behavior.
+           SHAs of updated queries are tracked.
+        3. Iterates through any SHAs that have been marked for deletion
+           within this `Graph` instance.
+        4. For each such SHA, it retrieves the corresponding `Query` object
+           from the database and deletes it.
+        5. Finally, it commits all these changes (merges and deletions)
+           to the database in a single transaction.
 
-        Only load options/selection/facets if query is not in db,
-        and updated options/selection/facets should change sha value.
+        Returns:
+            Mapping[str, Query]: A dictionary where keys are the SHAs of
+                                 the queries that were updated or newly
+                                 merged into the database, and values are
+                                 the corresponding `Query` objects as they
+                                 exist in the `Graph` instance after the merge.
         """
+        # updated_shas: set[str] = set()  # Track SHAs of updated queries
+        # for sha, query in self.queries.items():  # Iterate over queries in the graph
+        #     query_db = self.db.merge(query, commit=True)  # Merge query with database
+        #     if query is query_db:  # Check if the query object was replaced by the DB version
+        #     ...  # No change, query in graph was same as in DB or new
+        #     else:
+        #         updated_shas.add(sha)  # Mark SHA as updated
+        #         self.queries[sha] = query_db  # Update graph's query with DB version
+        # for sha in self._deleted_shas:  # Iterate over SHAs marked for deletion
+        #     query_to_delete = self.db.get(Query, sha)  # Fetch query to delete from DB
+        #     if query_to_delete is not None:  # If query exists in DB
+        #         self.db.delete(query_to_delete)  # Delete query from DB
+        # return {sha: self.queries[sha] for sha in updated_shas}  # Return updated queries
         updated_shas: set[str] = set()
         for sha, query in self.queries.items():
+            # --- Tag deduplication: ensure all tags are session-managed ---
+            if hasattr(query, "tags"):
+                for i, tag in enumerate(query.tags):
+                    tag.compute_sha()
+                    # Use the session-managed Tag instance
+                    existing = self.db.session.query(Tag).filter_by(sha=tag.sha).first()
+                    if existing:
+                        query.tags[i] = existing
+                    else:
+                        self.db.session.add(tag)
+            # --- End tag deduplication ---
             query_db = self.db.merge(query, commit=True)
-            if query is query_db:
-                ...
-            else:
+            if query is not query_db:
                 updated_shas.add(sha)
                 self.queries[sha] = query_db
         for sha in self._deleted_shas:
@@ -457,4 +496,4 @@ class Graph:
         # elif new in self.db:
         #     raise ValueError(f"{new.name} already in the database.")
         self.delete(original)
-        self.add(new)
+        self.add(new, force=True)
