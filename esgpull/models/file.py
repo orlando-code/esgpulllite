@@ -42,6 +42,22 @@ class FileDict(TypedDict):
     checksum_type: str
     size: int
     status: NotRequired[str]
+    variable: str
+    mip_era: str
+    institution_id: str
+    source_id: str
+    experiment_id: str
+    member_id: str
+    table_id: str
+    grid: str
+    grid_label: str
+    nominal_resolution: str
+    creation_date: str
+    title: str
+    instance_id: str
+    datetime_start: str
+    datetime_end: str
+    citation_url: str
 
 
 @dataclass(init=False)
