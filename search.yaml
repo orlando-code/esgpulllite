@@ -1,0 +1,18 @@
+search_criteria:
+  project: CMIP6
+  experiment_id: historical
+  member_id: r1i1p1f1
+  # variable: tos,rsdo,so,no3,ph
+  variable: tos
+  # variable: rsdo
+  frequency: mon
+  # nominal_resolution: 100 km # TODO: handle searching for highest resolution, falling back to lower resolution if not available
+
+meta_criteria:
+  limit: 400
+  subset:
+    lev: 0
+  process: true
+  max_workers: 64
+  delete_original: false
+  
