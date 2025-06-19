@@ -1,24 +1,20 @@
 from pathlib import Path
 from typing import Any, Optional, List, Dict
+from esgpull.esgpuller import Esgpull
+from esgpull.cli.utils import init_esgpull, parse_query, serialize_queries_from_file
+from esgpull.models import Query, Tag, File
+from esgpull.tui import Verbosity
+from esgpull.graph import Graph
+# from esgpull.models import file as file_models
 
-from esgpull.esgpull import Esgpull
-from esgpull.models import Query, FileStatus, Options, Tag
-from esgpull.result import Err
 
 class EsgpullAPI:
     """
-    Python API for interacting with esgpull.
+    Python API for interacting with esgpull, using the same logic as the CLI scripts.
     """
-
-    def __init__(self, config_path: Optional[str | Path] = None):
-        """
-        Initializes the EsgpullAPI.
-
-        Args:
-            config_path: Optional path to the esgpull configuration file.
-                         If None, esgpull will search in default locations.
-        """
-        self.esg = Esgpull(path=config_path)
+    def __init__(self, config_path: Optional[str | Path] = None, verbosity: str = "detail"):
+        self.verbosity = Verbosity[verbosity.capitalize()]
+        self.esg = Esgpull(path=config_path, verbosity=self.verbosity)
 
     def search(self, criteria: Dict[str, Any]) -> List[Dict[str, Any]]:
         """
@@ -31,23 +27,21 @@ class EsgpullAPI:
         Returns:
             A list of dictionaries, where each dictionary represents a found file/dataset.
         """
+        # Use the same logic as CLI: parse_query, then context.search
         _criteria = criteria.copy()
         max_hits = _criteria.pop("limit", None)
-
-        # Convert single string values in selection to list of strings
-        selection_dict = {}
-        for k, v in _criteria.items():
-            if isinstance(v, str):
-                selection_dict[k] = [v]
-            elif isinstance(v, list):
-                selection_dict[k] = v
-            else: # Attempt to convert to string and wrap in list
-                selection_dict[k] = [str(v)]
-
-
-        query = Query(selection=selection_dict)
-        
-        # Assuming search is for files by default, as per notebook context
+        tags = _criteria.pop("tags", [])
+        query = parse_query(
+            facets=[f"{k}:{v}" for k, v in _criteria.items()],
+            tags=tags,
+            require=None,
+            distrib=None,
+            latest=None,
+            replica=None,
+            retracted=None,
+        )
+        query.compute_sha()
+        self.esg.graph.resolve_require(query)
         results = self.esg.context.search(query, file=True, max_hits=max_hits)
         return [r.asdict() for r in results]
 
@@ -60,68 +54,164 @@ class EsgpullAPI:
                       Other keys can be facets (e.g., project, variable), 'limit', or 'tags'.
             track: If True, the query will be marked for tracking.
         """
+        # Use the same logic as CLI add.py
         _criteria = criteria.copy()
-        query_name_from_api = _criteria.pop("name", None)
-        if not query_name_from_api:
-            raise ValueError("'name' is required in criteria for add")
+        query_file = _criteria.pop("query_file", None)
+        tags = _criteria.pop("tags", [])
+        facets = [f"{k}:{v}" for k, v in _criteria.items() if k != "name"]
+        name = _criteria.get("name")
+        queries = []
+        if query_file is not None:
+            queries = serialize_queries_from_file(Path(query_file))
+        else:
+            query = parse_query(
+                facets=facets,
+                tags=tags + [f"name:{name}"] if name else tags,
+                require=None,
+                distrib=True,
+                latest=None,
+                replica=None,
+                retracted=None,
+            )
+            self.esg.graph.resolve_require(query)
+            if track:
+                query.track(query.options)
+            queries = [query]
+        queries = self.esg.insert_default_query(*queries)
+        empty = Query()
+        empty.compute_sha()
 
-        query_limit = _criteria.pop("limit", None) # This limit is popped but will not be used further in this method.
-        user_tags = _criteria.pop("tags", []) # Allow user to pass other tags
-
-        # Remaining items in _criteria are for selection
-        selection_dict = {}
-        for k, v in _criteria.items():
-            if isinstance(v, str):
-                selection_dict[k] = [v]
-            elif isinstance(v, list):
-                selection_dict[k] = v
-            else: # Attempt to convert to string and wrap in list
-                selection_dict[k] = [str(v)]
-
-        query_obj = Query(selection=selection_dict)
-
-        # Manage tags:
-        # Collect all desired tag names as strings
-        tag_names_to_ensure = set(user_tags)
-        tag_names_to_ensure.add(f"name:{query_name_from_api}")
-
-        final_tags_for_query = []
-        for name_str in sorted(list(tag_names_to_ensure)):
-            # Check if a tag with this name already exists in the graph/DB
-            tag_instance = self.esg.graph.get_tag(name=name_str)
-            if tag_instance is None:
-                # If not, create a new Tag object.
-                # Its SHA will be computed either by Graph.add or the before_insert listener in tag.py.
-                tag_instance = Tag(name=name_str)
-            final_tags_for_query.append(tag_instance)
+        for query in queries:
+            query.compute_sha()
+            self.esg.graph.resolve_require(query)
+            if query.sha == empty.sha:
+                raise ValueError("Trying to add empty query.")
+            if query.sha in self.esg.graph:
+                print('Skipping existing query:', query.name)
+                continue
+            else:
+                self.esg.graph.add(query)
+                print('New query added:', query.name)
+        new_queries = self.esg.graph.merge()
+        if new_queries:
+            print(f"{len(new_queries)} new query{'s' if len(new_queries) > 1 else ''} added.")
+        else:
+            print("No new query was added.")
+            
+    def valid_name_tag(
+        self,
+        graph: Graph,
+        query_id: str | None,
+        tag: str | None,
+    ) -> bool:
+        result = True
+        # get query from id
         
-        query_obj.tags = final_tags_for_query # Assign the list of (potentially mixed new/existing) Tag objects
-
-        self.esg.graph.add(query_obj, force=True)  # force=True to update if exists
-        if track:
-            # compute_sha might be needed if not done automatically before tracking
-            if not query_obj.sha:
-                 query_obj.compute_sha() # Or however SHA is computed/set
-            self.esg.db.track(query_obj.sha, status=True)
-        self.esg.graph.merge()  # Removed commit=True
-
-    def update(self, query_id: str) -> List[Dict[str, Any]]:
+        if query_id is not None:
+            shas = graph.matching_shas(query_id, graph._shas)
+            if len(shas) > 1:
+                print('Multiple matches found for query ID:', query_id)
+                result = False
+            elif len(shas) == 0:
+                print('No matches found for query ID:', query_id)
+                result = False
+        elif tag is not None:
+            tags = [t.name for t in graph.get_tags()]
+            if tag not in tags:
+                print('No queries tagged with:', tag)
+                result = False
+        return result
+    
+    def track_query(self, query_ids: list[str]) -> None:
         """
-        Updates a query by fetching the latest file information from ESGF nodes.
+        Marks existing queries for automatic tracking.
 
         Args:
-            query_id: The name of the query to update.
+            query_ids: List of query names or SHAs to track.
+        """
+        for sha in query_ids:
+            if not self.valid_name_tag(self.esg.graph, sha, None):
+                print(f"Invalid query ID: {sha}. Are you using a pre-tracked query_id?")
+                continue
+            query = self.esg.graph.get(sha)
+            if query.tracked:
+                print(f"{query.name} is already tracked.")
+                continue
+            if self.esg.graph.get_children(query.sha):
+                print('This query has children')    # TODO: handle children logic if needed
+            expanded = self.esg.graph.expand(query.sha)
+            tracked_query = query.clone(compute_sha=False)
+            tracked_query.track(expanded.options)
+            tracked_query.compute_sha()
+            if tracked_query.sha == query.sha:
+                # No change in SHA, just mark as tracked and merge
+                query.tracked = True
+                self.esg.graph.merge()
+                self.esg.ui.print(f":+1: {query.name}  is now tracked.")
+            else:
+                self.esg.graph.replace(query, tracked_query)
+                self.esg.graph.merge()
+                # self.esg.ui.print(f":+1: {tracked_query.name} (previously {query.name}) is now tracked.")
+                print(f":+1: {tracked_query.name} (previously {query.name}) is now tracked.")
+            return 
 
-        Returns:
-            A list of dictionaries representing all files associated with the query after the update.
+    def untrack_query(self, query_id: str) -> None:
+        """
+        Unmarks an existing query from automatic tracking.
+
+        Args:
+            query_id: The name of the query to untrack.
         """
         query = self.esg.graph.get(name=query_id)
         if not query:
             raise ValueError(f"Query with id '{query_id}' not found.")
+        untracked_query = query.clone()
+        untracked_query.tracked = False
+        self.esg.graph.replace(query, untracked_query)
+        self.esg.graph.merge()
 
-        updated_files_map = self.esg.sync(self.esg.update_queues([query]))
-        files_for_query = updated_files_map.get(query.sha, [])
-        return [f.asdict() for f in files_for_query]
+    def update(self, query_id: str, subset_criteria: Optional[dict] = None) -> List[Dict[str, Any]]:
+        """
+        Updates a tracked query by searching for matching files on ESGF,
+        adds new files to the database, and returns their information.
+
+        Args:
+            query_id: The name or SHA of the query to update.
+            subset_criteria: Optional dict to further filter files (facet:value).
+
+        Returns:
+            A list of dictionaries representing new files added to the query.
+        """
+        self.esg.graph.load_db()
+        query = self.esg.graph.get(name=query_id)
+        if not query:
+            raise ValueError(f"Query with id '{query_id}' not found.")
+        if not getattr(query, "tracked", False):
+            raise ValueError(f"Query '{query.name}' is not tracked. Only tracked queries can be updated.")
+
+        expanded = self.esg.graph.expand(query.sha)
+        # Search for files matching the expanded query
+        files_found = self.esg.context.search(expanded, file=True)
+        # Get SHAs of files already linked to the query
+        existing_shas = {getattr(f, "sha", None) for f in getattr(query, "files", [])}
+        # Filter out files already linked
+        new_files = []
+        for file in files_found:
+            if getattr(file, "sha", None) not in existing_shas:
+                if subset_criteria and not all(getattr(file, k, None) == v for k, v in subset_criteria.items()):
+                    continue
+                new_files.append(file)
+        # Link new files to the query in the DB
+        if new_files:
+            for file in new_files:
+                file.status = getattr(file, "status", None) or File.Status.Queued
+                self.esg.db.session.add(file)
+                self.esg.db.link(query=query, file=file)
+            query.updated_at = self.esg.context.now()
+            self.esg.db.session.add(query)
+            self.esg.db.session.commit()
+        self.esg.graph.merge()
+        return [f.asdict() for f in new_files]
 
     def download(self, query_id: str) -> List[Dict[str, Any]]:
         """
@@ -134,54 +224,18 @@ class EsgpullAPI:
             A list of dictionaries representing the files processed by the download command,
             including their status.
         """
+        # Use the same logic as CLI download.py (simplified)
         query = self.esg.graph.get(name=query_id)
         if not query:
             raise ValueError(f"Query with id '{query_id}' not found.")
-
-        files_to_download = self.esg.db.get_files_by_query(query, status=FileStatus.Queued)
-
+        files_to_download = self.esg.db.get_files_by_query(query, status=None)
         if not files_to_download:
             return []
-
-        downloaded_files, error_files_err_type = self.esg.sync(
-            self.esg.download(files_to_download, show_progress=False) # show_progress=False for API
+        downloaded_files, error_files = self.esg.sync(
+            self.esg.download(files_to_download, show_progress=False)
         )
-        
-        all_processed_files = downloaded_files
-        for err in error_files_err_type:
-            if isinstance(err, Err) and hasattr(err.data, 'asdict'):
-                all_processed_files.append(err.data)
-            # else: log or handle unexpected error type if necessary
-
+        all_processed_files = downloaded_files + [err.data for err in error_files if hasattr(err, 'data')]
         return [f.asdict() for f in all_processed_files]
-
-    def track_query(self, query_id: str) -> None:
-        """
-        Marks an existing query for automatic tracking.
-
-        Args:
-            query_id: The name of the query to track.
-        """
-        query = self.esg.graph.get(name=query_id)
-        if not query:
-            raise ValueError(f"Query with id '{query_id}' not found.")
-        
-        self.esg.db.track(query.sha, status=True)
-        self.esg.graph.merge()  # Removed commit=True
-
-    def untrack_query(self, query_id: str) -> None:
-        """
-        Unmarks an existing query from automatic tracking.
-
-        Args:
-            query_id: The name of the query to untrack.
-        """
-        query = self.esg.graph.get(name=query_id)
-        if not query:
-            raise ValueError(f"Query with id '{query_id}' not found.")
-
-        self.esg.db.track(query.sha, status=False)
-        self.esg.graph.merge()  # Removed commit=True
 
     def list_queries(self) -> List[Dict[str, Any]]:
         """
@@ -190,9 +244,16 @@ class EsgpullAPI:
         Returns:
             A list of dictionaries, where each dictionary represents a query.
         """
-        all_queries = self.esg.graph.queries.values()
-        return [q.asdict() for q in all_queries]
-
+        self.esg.graph.load_db()    # load queries from db (otherwise inaccessible)
+        return [
+            {
+                "name": q.name,
+                "sha": q.sha,
+                **q.asdict()
+            }
+            for q in self.esg.graph.queries.values()
+        ]
+        
     def get_query(self, query_id: str) -> Optional[Dict[str, Any]]:
         """
         Retrieves a specific query by its name.
@@ -203,7 +264,13 @@ class EsgpullAPI:
         Returns:
             A dictionary representing the query if found, otherwise None.
         """
+        self.esg.graph.load_db()
         query = self.esg.graph.get(name=query_id)
         if query:
-            return query.asdict()
+            return {
+                "name": query.name,
+                "sha": query.sha,
+                **query.asdict()
+            }
         return None
+
