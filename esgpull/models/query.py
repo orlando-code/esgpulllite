@@ -72,6 +72,22 @@ class File(Base):
     status: Mapped[FileStatus] = mapped_column(
         sa.Enum(FileStatus), default=FileStatus.New
     )
+    variable: Mapped[str] = mapped_column(sa.String(255), default="")
+    mip_era: Mapped[str] = mapped_column(sa.String(255), default="")
+    institution_id: Mapped[str] = mapped_column(sa.String(255), default="")
+    source_id: Mapped[str] = mapped_column(sa.String(255), default="")
+    experiment_id: Mapped[str] = mapped_column(sa.String(255), default="")
+    member_id: Mapped[str] = mapped_column(sa.String(255), default="")
+    table_id: Mapped[str] = mapped_column(sa.String(255), default="")
+    grid: Mapped[str] = mapped_column(sa.String(255), default="")
+    grid_label: Mapped[str] = mapped_column(sa.String(255), default="")
+    nominal_resolution: Mapped[str] = mapped_column(sa.String(255), default="")
+    creation_date: Mapped[str] = mapped_column(sa.String(255), default="")
+    title: Mapped[str] = mapped_column(sa.String(255), default="")
+    instance_id: Mapped[str] = mapped_column(sa.String(255), default="")
+    datetime_start: Mapped[str] = mapped_column(sa.String(255), default="")
+    datetime_end: Mapped[str] = mapped_column(sa.String(255), default="")
+    citation_url: Mapped[str] = mapped_column(sa.String(255), default="")
     queries: Mapped[list[Query]] = relationship(
         secondary=query_file_proxy,
         default_factory=list,
@@ -100,6 +116,22 @@ class File(Base):
             checksum=source["checksum"],
             checksum_type=source["checksum_type"],
             size=source["size"],
+            variable=source.get("variable", ""),
+            mip_era = source.get("mip_era", ""),
+            institution_id = source.get("institution_id", ""),
+            source_id = source.get("source_id", ""),
+            experiment_id = source.get("experiment_id", ""),
+            member_id = source.get("member_id", ""),
+            table_id = source.get("table_id", ""),
+            grid = source.get("grid", ""),
+            grid_label = source.get("grid_label", ""),
+            nominal_resolution = source.get("nominal_resolution", ""),
+            creation_date = source.get("creation_date", ""),
+            title = source.get("title", ""),
+            instance_id = source.get("instance_id", ""),
+            datetime_start = source.get("datetime_start", ""),
+            datetime_end = source.get("datetime_end", ""),
+            citation_url = source.get("citation_url", ""),
         )
         if "status" in source:
             result.status = FileStatus(source.get("source"))
@@ -115,6 +147,22 @@ class File(Base):
         checksum = find_str(source["checksum"])
         checksum_type = find_str(source["checksum_type"])
         size = find_int(source["size"])
+        variable = find_str(source.get("variable", ""))
+        mip_era = find_str(source.get("mip_era", ""))
+        institution_id = find_str(source.get("institution_id", ""))
+        source_id = find_str(source.get("source_id", ""))
+        experiment_id = find_str(source.get("experiment_id", ""))
+        member_id = find_str(source.get("member_id", ""))
+        table_id = find_str(source.get("table_id", ""))
+        grid = find_str(source.get("grid", ""))
+        grid_label = find_str(source.get("grid_label", ""))
+        nominal_resolution = find_str(source.get("nominal_resolution", ""))
+        creation_date = find_str(source.get("creation_date", ""))
+        title = find_str(source.get("title", ""))
+        instance_id = find_str(source.get("instance_id", ""))
+        datetime_start = find_str(source.get("datetime_start", ""))
+        datetime_end = find_str(source.get("datetime_end", ""))
+        citation_url = find_str(source.get("citation_url", ""))
         file_id = ".".join([dataset_id, filename])
         dataset_master, version = dataset_id.rsplit(".", 1)  # remove version
         master_id = ".".join([dataset_master, filename])
@@ -132,6 +180,22 @@ class File(Base):
                 "checksum": checksum,
                 "checksum_type": checksum_type,
                 "size": size,
+                "variable": variable,
+                "mip_era": mip_era,
+                "institution_id": institution_id,
+                "source_id": source_id,
+                "experiment_id": experiment_id,
+                "member_id": member_id,
+                "table_id": table_id,
+                "grid": grid,
+                "grid_label": grid_label,
+                "nominal_resolution": nominal_resolution,
+                "creation_date": creation_date,
+                "title": title,
+                "instance_id": instance_id,
+                "datetime_start": datetime_start,
+                "datetime_end": datetime_end,
+                "citation_url": citation_url,
             }
         )
         result.compute_sha()
@@ -151,6 +215,22 @@ class File(Base):
             checksum_type=self.checksum_type,
             size=self.size,
             status=self.status.name,
+            variable=self.variable,  # I've added these
+            mip_era=self.mip_era,
+            institution_id=self.institution_id,
+            source_id=self.source_id,
+            experiment_id=self.experiment_id,
+            member_id=self.member_id,
+            table_id=self.table_id,
+            grid=self.grid,
+            grid_label=self.grid_label,
+            nominal_resolution=self.nominal_resolution,
+            creation_date=self.creation_date,
+            title=self.title,
+            instance_id=self.instance_id,
+            datetime_start=self.datetime_start,
+            datetime_end=self.datetime_end,
+            citation_url=self.citation_url,
         )
 
     def clone(self, compute_sha: bool = True) -> File:
