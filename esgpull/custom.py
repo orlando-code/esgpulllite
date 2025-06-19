@@ -5,14 +5,10 @@ import pandas as pd
 import xarray as xa
 import time
 import hashlib
-import time
 
 # fileops
 from pathlib import Path
 import concurrent.futures
-import threading
-import asyncio
-import shutil
 import dask
 from concurrent.futures import ThreadPoolExecutor
 
@@ -27,14 +23,13 @@ from esgpull.models import File
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.progress import Progress, TaskID, BarColumn
-from rich.progress import Progress
-from dask.diagnostics import ProgressBar
+from rich.progress import Progress, BarColumn
 
 
 def read_yaml(file_path):
     import yaml
-    with open(file_path, 'r') as file:
+
+    with open(file_path, "r") as file:
         return yaml.safe_load(file)
 
 
@@ -43,12 +38,22 @@ class SearchResults:
     A class to hold search results from the Esgpull API.
     It can be used to filter, sort, and manipulate the results.
     """
-    def __init__(self, search_criteria: dict, meta_criteria: dict):
+
+    def __init__(
+        self,
+        search_criteria: dict,
+        meta_criteria: dict,
+        config_path: str = None,
+    ):
         self.search_criteria = search_criteria
         self.meta_criteria = meta_criteria
-        self.top_n = meta_criteria.get('top_n', 3)  # Default to 10 if not specified
+        self.top_n = meta_criteria.get(
+            "top_n", 3
+        )  # Default to 10 if not specified
         self.search_results = []  # List to hold File objects
-        self.results_df = None  # DataFrame to hold results for further processing
+        self.results_df = (
+            None  # DataFrame to hold results for further processing
+        )
         self.results_df_top = None  # DataFrame for top N results
         self.search_results_fp = None
         self.fs = EsgpullAPI().esg.fs  # File system from Esgpull API
@@ -56,18 +61,22 @@ class SearchResults:
     def load_config(self, config_path: str) -> None:
         """Load search criteria and metadata from a YAML configuration file."""
         config = read_yaml(config_path)
-        self.search_criteria = config.get('search_criteria', {})
-        self.meta_criteria = config.get('meta_criteria', {})
-        self.top_n = self.meta_criteria.get('top_n', 3)
-        self.search_criteria['limit'] = self.meta_criteria.get('limit', 4)  # Default limit if not specified
-        
+        self.search_criteria = config.get("search_criteria", {})
+        self.meta_criteria = config.get("meta_criteria", {})
+        self.top_n = self.meta_criteria.get("top_n", 3)
+        self.search_criteria["limit"] = self.meta_criteria.get(
+            "limit", 4
+        )  # Default limit if not specified
+
     def do_search(self) -> None:
         """Perform a search using the provided criteria and populate results."""
         api = EsgpullAPI()
         results = api.search(criteria=self.search_criteria)
         self.results_df = pd.DataFrame(results)
-        if '_sa_instance_state' in self.results_df.columns:
-            self.results_df = self.results_df.drop(columns=['_sa_instance_state'])
+        if "_sa_instance_state" in self.results_df.columns:
+            self.results_df = self.results_df.drop(
+                columns=["_sa_instance_state"]
+            )
         if not self.results_df.empty:
             self.sort_results_by_metadata()
         else:
@@ -79,15 +88,26 @@ class SearchResults:
             print("[SearchResults] No results to sort.")
             return
         # convert resolutions to float for sorting
-        resolutions = self.results_df.apply(lambda f: self.calc_resolution(f.nominal_resolution), axis=1)
-        self.results_df['nominal_resolution'] = resolutions
+        resolutions = self.results_df.apply(
+            lambda f: self.calc_resolution(f.nominal_resolution), axis=1
+        )
+        self.results_df["nominal_resolution"] = resolutions
         self.results_df = self.results_df.sort_values(
-            by=["institution_id", "source_id", "experiment_id", "member_id", "nominal_resolution"],
+            by=[
+                "institution_id",
+                "source_id",
+                "experiment_id",
+                "member_id",
+                "nominal_resolution",
+            ],
             ascending=[True, True, True, True, True],
-            na_position="last"
+            na_position="last",
         ).reset_index(drop=True)
         # Update self.search_results to match the sorted DataFrame
-        self.search_results = [File(**{k: v for k, v in row.items() if k != '_sa_instance_state'}) for _, row in self.results_df.iterrows()]
+        self.search_results = [
+            File(**{k: v for k, v in row.items() if k != "_sa_instance_state"})
+            for _, row in self.results_df.iterrows()
+        ]
 
     def calc_resolution(self, res) -> float:
         """
@@ -107,35 +127,55 @@ class SearchResults:
         if m := re.match(r"([\d.]+)degree", res):
             return float(m.group(1))
         return 9999.0
-        
+
     def search_message(self, search_state: str) -> None:
         """Display a nicely formatted search message using rich."""
         console = Console()
-        if search_state == 'pre':
-            table = Table(title="Search Criteria", show_header=True, header_style="bold magenta")
+        if search_state == "pre":
+            table = Table(
+                title="Search Criteria",
+                show_header=True,
+                header_style="bold magenta",
+            )
             table.add_column("Key", style="dim", width=20)
             table.add_column("Value", style="bold")
             for k, v in self.search_criteria.items():
                 table.add_row(str(k), str(v))
-            console.print(Panel(table, title="[cyan]Starting Search", border_style="cyan"))
-        elif search_state == 'post':
-            if len(self.search_results) == self.meta_criteria.get('limit', None):
-                match_msg = ("[orange1](limit of search search reached)[/orange1]")
+            console.print(
+                Panel(
+                    table, title="[cyan]Starting Search", border_style="cyan"
+                )
+            )
+        elif search_state == "post":
+            if len(self.search_results) == self.meta_criteria.get(
+                "limit", None
+            ):
+                match_msg = (
+                    " [orange1](limit of search search reached)[/orange1]"
+                )
             else:
                 match_msg = ""
-            msg = f"[green]Search completed.[/green] [bold]{len(self.search_results)}[/bold] files {match_msg} found matching criteria."
-            console.print(Panel(msg, title="[green]Search Results", border_style="green"))
+            msg = f"[green]Search completed.[/green] [bold]{len(self.search_results)}[/bold] files{match_msg} found matching criteria."  # noqa
+            console.print(
+                Panel(msg, title="[green]Search Results", border_style="green")
+            )
 
     def get_top_n(self) -> pd.DataFrame:
         """
-        Return all files associated with the top n groups, 
+        Return all files associated with the top n groups,
         where groups are defined by ['institution_id', 'source_id', 'experiment_id'].
         """
         if self.results_df is None:
-            raise ValueError("No results to select from. Run do_search() first.")
+            raise ValueError(
+                "No results to select from. Run do_search() first."
+            )
         # Identify the top n groups by group size (descending)
-        group_keys = ['institution_id', 'source_id', 'experiment_id']
-        group_sizes = self.results_df.groupby(group_keys).size().sort_values(ascending=False)
+        group_keys = ["institution_id", "source_id", "experiment_id"]
+        group_sizes = (
+            self.results_df.groupby(group_keys)
+            .size()
+            .sort_values(ascending=False)
+        )
         top_groups = group_sizes.head(self.top_n).index
         # Select all rows belonging to these top groups
         mask = self.results_df.set_index(group_keys).index.isin(top_groups)
@@ -154,6 +194,7 @@ class SearchResults:
             if isinstance(val, str):
                 return val.strip()
             return str(val)
+
         # Clean all values
         cleaned_str = [clean_value(v) for v in self.search_criteria.values()]
         # order alphabetically
@@ -169,49 +210,72 @@ class SearchResults:
         self.search_results_fp = search_dir / f"{self.search_id}.csv"
         if self.results_df is None:
             raise ValueError("No results to save. Run do_search() first.")
-        
+
         if not self.search_results_fp.exists():
             self.results_df.to_csv(self.search_results_fp, index=False)
             print(f"Search results saved to {self.search_results_fp}")
         else:
-            print(f"Search results already exist at {self.search_results_fp}. Not overwriting.")
-        
+            print(
+                f"Search results already exist at {self.search_results_fp}. Not overwriting."
+            )
+
     def load_search_results(self) -> pd.DataFrame:
         """Load search results from a CSV file."""
         search_dir = self.fs.auth.parent / "search_results"
         search_fp = search_dir / f"{self.search_id}.csv"
         if search_fp.exists():
             self.results_df = pd.read_csv(search_fp)
-            if '_sa_instance_state' in self.results_df.columns:
-                self.results_df = self.results_df.drop(columns=['_sa_instance_state'])
+            if "_sa_instance_state" in self.results_df.columns:
+                self.results_df = self.results_df.drop(
+                    columns=["_sa_instance_state"]
+                )
             self.search_results_fp = search_fp
-            self.search_results = [File(**{k: v for k, v in row.items() if k != '_sa_instance_state'}) for _, row in self.results_df.iterrows()]
+            self.search_results = [
+                File(
+                    **{
+                        k: v
+                        for k, v in row.items()
+                        if k != "_sa_instance_state"
+                    }
+                )
+                for _, row in self.results_df.iterrows()
+            ]
             return self.results_df
         else:
-            raise FileNotFoundError(f"Search results file {search_fp} not found.")
-    
+            raise FileNotFoundError(
+                f"Search results file {search_fp} not found."
+            )
+
     def run(self) -> list[File]:
-        """Perform search, sort, and return top n results as File objects. Loads from cache if available, else performs search and saves."""
-        self.load_config("/Users/rt582/Library/CloudStorage/OneDrive-UniversityofCambridge/cambridge/phd/esgpullplus/search.yaml")
+        """Perform search, sort, and return top n results as File objects. Loads from cache if available, else performs
+        search and saves."""
+        if not self.search_criteria or not self.meta_criteria:
+            self.load_config(read_yaml(REPO_ROOT / "search.yaml"))
         # Try to load from cache if available, else perform search and save
         try:
             self.search_id = self.clean_and_join_dict_vals()
             self.load_search_results()
-            print(f"Loaded search results from cache: {self.search_results_fp}")
-            self.search_message('post')
+            print(
+                f"Loaded search results from cache: {self.search_results_fp}"
+            )
+            self.search_message("post")
         except Exception:
-            self.search_message('pre')
-            self.do_search()           
-            self.search_message('post')
+            self.search_message("pre")
+            self.do_search()
+            self.search_message("post")
             self.sort_results_by_metadata()
             self.save_searches()
         # Always get top_n from the current results_df
         top_n_df = self.get_top_n()
+        # limit
+        if self.meta_criteria.get("limit", None):
+            top_n_df = top_n_df.head(self.meta_criteria["limit"])
         return [File(**row) for _, row in top_n_df.iterrows()]
 
 
 class DownloadProgressUI:
     """Manages rich progress bars for overall and per-file download, with status in the bar description."""
+
     def __init__(self, files):
         self.files = files
         self.progress = Progress(
@@ -223,17 +287,19 @@ class DownloadProgressUI:
             transient=True,
             expand=True,
             auto_refresh=True,
-            refresh_per_second=10
+            refresh_per_second=10,
         )
         self.overall_task = None
         self.status_counts = {"done": 0, "skipped": 0, "failed": 0}
         self.failed_files = []  # List of (file, error_message)
         self.file_task_ids = {}  # file -> task_id
-        self.file_status = {}    # file -> status string
+        self.file_status = {}  # file -> status string
 
     def __enter__(self):
         self.progress.__enter__()
-        self.overall_task = self.progress.add_task("[cyan]Overall\n", total=len(self.files))
+        self.overall_task = self.progress.add_task(
+            "[cyan]Overall\n", total=len(self.files)
+        )
         # Add a progress bar for each file, with initial status 'PENDING'
         for file in self.files:
             fname = file.filename
@@ -267,7 +333,9 @@ class DownloadProgressUI:
     def complete_file(self, file):
         # Advance overall progress and mark file bar as complete
         task_id = self.file_task_ids[file.file_id]
-        self.progress.update(task_id, completed=self.progress.tasks[task_id].total)
+        self.progress.update(
+            task_id, completed=self.progress.tasks[task_id].total
+        )
         self.progress.advance(self.overall_task)
 
     def update_file_progress(self, file, completed, total=None):
@@ -281,17 +349,32 @@ class DownloadProgressUI:
         from rich.console import Console
         from rich.table import Table
         from rich.panel import Panel
+
         console = Console()
-        table = Table(title="Download Summary", show_header=True, header_style="bold magenta")
+        table = Table(
+            title="Download Summary",
+            show_header=True,
+            header_style="bold magenta",
+        )
         table.add_column("Status", style="bold")
         table.add_column("Count", style="bold")
-        table.add_row("[green]Completed[/green]", str(self.status_counts['done']))
-        table.add_row("[yellow]Skipped[/yellow]", str(self.status_counts['skipped']))
-        table.add_row("[red]Failed[/red]", str(self.status_counts['failed']))
+        table.add_row(
+            "[green]Completed[/green]", str(self.status_counts["done"])
+        )
+        table.add_row(
+            "[yellow]Skipped[/yellow]", str(self.status_counts["skipped"])
+        )
+        table.add_row("[red]Failed[/red]", str(self.status_counts["failed"]))
         console.print(table)
         if self.failed_files:
             file, msg = self.failed_files[0]
-            console.print(Panel(f"Example failed file: [bold]{file.filename}[/bold]\n[red]{msg}[/red]", title="[red]Failure Example[/red]", style="red"))
+            console.print(
+                Panel(
+                    f"Example failed file: [bold]{file.filename}[/bold]\n[red]{msg}[/red]",
+                    title="[red]Failure Example[/red]",
+                    style="red",
+                )
+            )
 
 
 class DownloadSubset:
@@ -329,13 +412,19 @@ class DownloadSubset:
             ui.set_status(file, "DL", "cyan")
             # Set up per-file progress bar for chunk loading
             task_id = ui.file_task_ids[file.file_id]
-            ds = xa.open_dataset(file.url, engine="h5netcdf", chunks={"time": 2})
+            ds = xa.open_dataset(
+                file.url, engine="h5netcdf", chunks={"time": 2}
+            )
             if self.subset:
                 missing_dims = []
                 for dim in self.subset:
                     if dim not in ds.dims and dim not in ds.coords:
                         missing_dims.append(dim)
-                remaining_subset_dims = {k: v for k, v in self.subset.items() if k not in missing_dims}
+                remaining_subset_dims = {
+                    k: v
+                    for k, v in self.subset.items()
+                    if k not in missing_dims
+                }
                 if remaining_subset_dims:
                     ds = ds.isel(**remaining_subset_dims)
                 else:
@@ -343,6 +432,7 @@ class DownloadSubset:
             # Fine-grained progress: count dask chunks and update rich progress bar
             from dask.callbacks import Callback
             import threading
+
             class FileChunkProgress(Callback):
                 def __init__(self, file, ui, total_chunks):
                     self.file = file
@@ -350,20 +440,28 @@ class DownloadSubset:
                     self.total_chunks = total_chunks
                     self.loaded_chunks = 0
                     self.lock = threading.Lock()
+
                 def _start_state(self, dsk, state):
-                    self.ui.update_file_progress(self.file, 0, self.total_chunks)
+                    self.ui.update_file_progress(
+                        self.file, 0, self.total_chunks
+                    )
+
                 def _posttask(self, key, result, dsk, state, id):
                     with self.lock:
                         self.loaded_chunks += 1
-                        self.ui.update_file_progress(self.file, self.loaded_chunks)
+                        self.ui.update_file_progress(
+                            self.file, self.loaded_chunks
+                        )
+
             # Estimate total chunks
             total_chunks = 0
+            # TODO: fix this
             for v in ds.data_vars.values():
-                if hasattr(v.data, 'chunks') and v.data.chunks:
+                if hasattr(v.data, "chunks") and v.data.chunks:
                     total_chunks += sum([len(c) for c in v.data.chunks])
             if total_chunks == 0:
                 total_chunks = 1
-            with dask.config.set(scheduler='threads'):
+            with dask.config.set(scheduler="threads"):
                 with FileChunkProgress(file, ui, total_chunks):
                     ds.load()
             ds.to_netcdf(tmp_file_path)
@@ -389,14 +487,19 @@ class DownloadSubset:
         import xarray as xr
         from concurrent.futures import ThreadPoolExecutor
         import dask
+
         files = self.files
+
         # Step 1: Open all datasets in parallel (fetch metadata)
         def open_ds(file):
             try:
-                ds = xr.open_dataset(file.url, engine="h5netcdf", chunks={"time": 2})
+                ds = xr.open_dataset(
+                    file.url, engine="h5netcdf", chunks={"time": 2}
+                )
                 return (file, ds, None)
             except Exception as e:
                 return (file, None, e)
+
         with DownloadProgressUI(files) as ui:
             with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
                 results = list(executor.map(open_ds, files))
@@ -412,8 +515,16 @@ class DownloadSubset:
             # Step 2: (Optional) Subset
             for i, (file, ds) in enumerate(datasets):
                 if self.subset:
-                    missing_dims = [dim for dim in self.subset if dim not in ds.dims and dim not in ds.coords]
-                    remaining_subset_dims = {k: v for k, v in self.subset.items() if k not in missing_dims}
+                    missing_dims = [
+                        dim
+                        for dim in self.subset
+                        if dim not in ds.dims and dim not in ds.coords
+                    ]
+                    remaining_subset_dims = {
+                        k: v
+                        for k, v in self.subset.items()
+                        if k not in missing_dims
+                    }
                     if remaining_subset_dims:
                         ds = ds.isel(**remaining_subset_dims)
                         datasets[i] = (file, ds)
@@ -421,6 +532,7 @@ class DownloadSubset:
             # Setup per-file chunk progress
             from dask.callbacks import Callback
             import threading
+
             class FileChunkProgress(Callback):
                 def __init__(self, file, ui, total_chunks):
                     self.file = file
@@ -428,12 +540,19 @@ class DownloadSubset:
                     self.total_chunks = total_chunks
                     self.loaded_chunks = 0
                     self.lock = threading.Lock()
+
                 def _start_state(self, dsk, state):
-                    self.ui.update_file_progress(self.file, 0, self.total_chunks)
+                    self.ui.update_file_progress(
+                        self.file, 0, self.total_chunks
+                    )
+
                 def _posttask(self, key, result, dsk, state, id):
                     with self.lock:
                         self.loaded_chunks += 1
-                        self.ui.update_file_progress(self.file, self.loaded_chunks)
+                        self.ui.update_file_progress(
+                            self.file, self.loaded_chunks
+                        )
+
             # Build all chunk progress callbacks
             callbacks = []
             load_calls = []
@@ -441,7 +560,7 @@ class DownloadSubset:
                 # Estimate total chunks
                 total_chunks = 0
                 for v in ds.data_vars.values():
-                    if hasattr(v.data, 'chunks') and v.data.chunks:
+                    if hasattr(v.data, "chunks") and v.data.chunks:
                         total_chunks += sum([len(c) for c in v.data.chunks])
                 if total_chunks == 0:
                     total_chunks = 1
@@ -464,32 +583,48 @@ class DownloadSubset:
                     ui.add_failed(file, f"FAIL {file.filename}: {e}")
                     ui.complete_file(file)
             ui.print_summary()
-            
+
     def completion_message(self):
         console = Console()
-        table = Table(title="Download Summary", show_header=True, header_style="bold magenta")
+        table = Table(
+            title="Download Summary",
+            show_header=True,
+            header_style="bold magenta",
+        )
         table.add_column("Status", style="bold")
         table.add_column("Count", style="bold")
-        table.add_row("[green]Completed[/green]", str(self.status_counts['done']))
-        table.add_row("[yellow]Skipped[/yellow]", str(self.status_counts['skipped']))
-        table.add_row("[red]Failed[/red]", str(self.status_counts['failed']))
-        console.print(Panel(table, title="[cyan]Download Complete", border_style="cyan"))
+        table.add_row(
+            "[green]Completed[/green]", str(self.status_counts["done"])
+        )
+        table.add_row(
+            "[yellow]Skipped[/yellow]", str(self.status_counts["skipped"])
+        )
+        table.add_row("[red]Failed[/red]", str(self.status_counts["failed"]))
+        console.print(
+            Panel(table, title="[cyan]Download Complete", border_style="cyan")
+        )
 
     def run(self):
-        file_str = 'files' if len(self.files) > 1 else 'file'
+        file_str = "files" if len(self.files) > 1 else "file"
         print(f"Attempting download of {len(self.files)} {file_str}...\n")
         # Use new parallel method for >1 file
         # if len(self.files) > 1:
         #     self.download_all_parallel()
         # else:
         with DownloadProgressUI(self.files) as ui:
+
             def wrapped_download(file):
                 return self.download_and_save_file(file, ui)
+
             try:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                with concurrent.futures.ThreadPoolExecutor(
+                    max_workers=self.max_workers
+                ) as executor:
                     list(executor.map(wrapped_download, self.files))
             except KeyboardInterrupt:
-                print("\nDownload interrupted by user. Shutting down workers...")
+                print(
+                    "\nDownload interrupted by user. Shutting down workers..."
+                )
                 executor.shutdown(wait=False, cancel_futures=True)
             finally:
                 ui.print_summary()
@@ -497,7 +632,7 @@ class DownloadSubset:
 
 class RegridderManager:
     # TODO: getting a esmf warning when trying to regrid the same (deleted file): have to restart code
-    def __init__(self, fs, ds, target_res=(1,1), periodic=True, verbose=1):
+    def __init__(self, fs, ds, target_res=(1, 1), periodic=True):
         """
         ds: xarray.Dataset with native curvilinear ocean grid
         target_res: resolution as (lon_res, lat_res)
@@ -505,7 +640,7 @@ class RegridderManager:
         """
         self.fs = fs
         self.ds = ds.load()
-        self.success_count = 0
+        self.success_count = 0  # TODO: track successful regriddings
         self.fail_count = 0
         self.periodic = periodic
         self.target_res = target_res
@@ -516,29 +651,31 @@ class RegridderManager:
         self.weight_dir = self.fs.data / "xesmf_regrid_weights"
         self.weight_dir.mkdir(exist_ok=True)
         self.regridder = self._get_or_create_regridder()
-    
-    
-    def estimate_target_resolution(self):
-        # TODO
-        """
-        Estimate target resolution based on the dataset's native grid.
-        If target_res is not provided, use the native resolution of the dataset.
-        """
-        if self.target_res is not None:
-            return self.target_res
-        lon = self.ds['lon'] if 'lon' in self.ds.coords else self.ds['longitude']
-        lat = self.ds['lat'] if 'lat' in self.ds.coords else self.ds['latitude']
-        lon_res = np.abs(lon[1] - lon[0])
 
-    def _get_varname(self):
+    # def estimate_target_resolution(self):
+    #     # TODO
+    #     """
+    #     Estimate target resolution based on the dataset's native grid.
+    #     If target_res is not provided, use the native resolution of the dataset.
+    #     """
+    #     if self.target_res is not None:
+    #         return self.target_res
+    #     lon = (
+    #         self.ds["lon"] if "lon" in self.ds.coords else self.ds["longitude"]
+    #     )
+    #     lat = (
+    #         self.ds["lat"] if "lat" in self.ds.coords else self.ds["latitude"]
+    #     )
+    #     lon_res = np.abs(lon[1] - lon[0])
+
+    def _get_varname(self, ncfile=None):
         varname = None
         for v in self.ds.data_vars:
-            if not any(sub in v.lower() for sub in ['bnds', 'vertices']):
+            if not any(sub in v.lower() for sub in ["bnds", "vertices"]):
                 varname = v
                 break
         if varname is None:
-            if verbose == 1:
-                print(f"No suitable variable found in {ncfile}")
+            print(f"No suitable variable found in {ncfile}")
             return None
         return varname
 
@@ -547,46 +684,70 @@ class RegridderManager:
         dim_map = {}
         dims = list(self.ds.dims)
         # If both i and j are present, decide which is x (lon) and which is y (lat) by shape
-        if 'i' in dims and 'j' in dims:
-            i_len = self.ds.sizes['i']
-            j_len = self.ds.sizes['j']
+        if "i" in dims and "j" in dims:
+            i_len = self.ds.sizes["i"]
+            j_len = self.ds.sizes["j"]
             # Longitude usually has more points than latitude
             if i_len > j_len:
-                dim_map['i'] = 'x'  # i is longitude
-                dim_map['j'] = 'y'  # j is latitude
+                dim_map["i"] = "x"  # i is longitude
+                dim_map["j"] = "y"  # j is latitude
             else:
-                dim_map['i'] = 'y'  # i is latitude
-                dim_map['j'] = 'x'  # j is longitude
+                dim_map["i"] = "y"  # i is latitude
+                dim_map["j"] = "x"  # j is longitude
         else:
-            if 'i' in dims: dim_map['i'] = 'y'
-            if 'j' in dims: dim_map['j'] = 'x'
+            if "i" in dims:
+                dim_map["i"] = "y"
+            if "j" in dims:
+                dim_map["j"] = "x"
         return self.ds.rename_dims(dim_map)
 
     def _standardize_coords(self):
         # Ensure 'lat' and 'lon' are present and correctly named
-        self.ds = self.ds.rename({'latitude': 'lat'}) if 'latitude' in self.ds.coords and 'lat' not in self.ds.coords else self.ds
-        self.ds = self.ds.rename({'longitude': 'lon'}) if 'longitude' in self.ds.coords and 'lon' not in self.ds.coords else self.ds
+        self.ds = (
+            self.ds.rename({"latitude": "lat"})
+            if "latitude" in self.ds.coords and "lat" not in self.ds.coords
+            else self.ds
+        )
+        self.ds = (
+            self.ds.rename({"longitude": "lon"})
+            if "longitude" in self.ds.coords and "lon" not in self.ds.coords
+            else self.ds
+        )
+
         return self.ds
 
     def _make_grid_in(self):
-        lons = np.ascontiguousarray(self.ds['lon'].values)
-        lats = np.ascontiguousarray(self.ds['lat'].values)
-        
+        lons = self.ds["lon"].values
+        lats = self.ds["lat"].values
+
+        if lons.ndim == 2 and lons.shape[1] > lons.shape[0]:
+            lons = lons.T
+            lats = lats.T
+
+        lons = np.asfortranarray(lons)
+        lats = np.asfortranarray(lats)
+
         if lons.ndim == 1 and lats.ndim == 1:
-            return xa.Dataset({'lon': (['x'], lons), 'lat': (['y'], lats)})
+            return xa.Dataset({"lon": (["x"], lons), "lat": (["y"], lats)})
         elif lons.ndim == 2 and lats.ndim == 2:
-            return xa.Dataset({'lon': (['x', 'y'], lons), 'lat': (['x', 'y'], lats)})   # TODO: I think this is still sometimes failing (different for different files)
+            return xa.Dataset(
+                {"lon": (["x", "y"], lons), "lat": (["x", "y"], lats)}
+            )  # TODO: I think this is still sometimes failing (different for different files)
         else:
-            raise ValueError(f"Unsupported dimensions: lon: {lons.ndim}, lat: {lats.ndim}. Expected 1D or 2D array.")
+            raise ValueError(
+                f"Unsupported dimensions: lon: {lons.ndim}, lat: {lats.ndim}. Expected 1D or 2D array."
+            )
 
     def _standardise_lon_limits(self):
-        lon = self.ds['lon'] if 'lon' in self.ds.coords else self.ds['longitude']
+        lon = (
+            self.ds["lon"] if "lon" in self.ds.coords else self.ds["longitude"]
+        )
 
         # If all longitudes are >= 0, shift to -180..180/360
         if np.all(lon.values >= 0):
             lon = ((lon - 180) % 360) - 180
             # Also update the dataset so downstream code uses shifted lons
-            if 'lon' in self.ds.coords:
+            if "lon" in self.ds.coords:
                 self.ds = self.ds.assign_coords(lon=lon)
             else:
                 self.ds = self.ds.assign_coords(longitude=lon)
@@ -594,16 +755,18 @@ class RegridderManager:
 
     def _make_grid_out(self):
         lon_res, lat_res = self.target_res
-        
+
         target_lon = np.arange(-180, 180 + lon_res, lon_res)
         target_lat = np.arange(-90, 90 + lat_res, lat_res)
-        return xa.Dataset({'lon': (['lon'], target_lon), 'lat': (['lat'], target_lat)})
+        return xa.Dataset(
+            {"lon": (["lon"], target_lon), "lat": (["lat"], target_lat)}
+        )
 
     def _weights_filename(self):
         # Hash the shape of input grid to ensure reuse
         id_str = f"{self.ds['lon'].shape}-{self.target_res}"
         hex_hash = hashlib.md5(id_str.encode()).hexdigest()
-        
+
         return self.weight_dir / f"regrid_weights_{hex_hash}.nc"
 
     def _get_or_create_regridder(self):
@@ -612,26 +775,36 @@ class RegridderManager:
         weights_path = self._weights_filename()
 
         if weights_path.exists():
-            return xe.Regridder(grid_in, grid_out,
-                                method='bilinear',
-                                periodic=self.periodic,
-                                filename=weights_path,
-                                reuse_weights=True)
+            return xe.Regridder(
+                grid_in,
+                grid_out,
+                method="bilinear",
+                periodic=self.periodic,
+                filename=weights_path,
+                reuse_weights=True,
+            )
         else:
-            return xe.Regridder(grid_in, grid_out,
-                                method='bilinear',
-                                periodic=self.periodic,
-                                ignore_degenerate=True,
-                                filename=weights_path)
+            return xe.Regridder(
+                grid_in,
+                grid_out,
+                method="bilinear",
+                periodic=self.periodic,
+                ignore_degenerate=True,
+                filename=weights_path,
+            )
 
     def _trim_unnecessary_vals(self):
-        # remove i,j,latitude, longitude coords
-        coords_to_remove = ['i', 'j', 'latitude', 'longitude']
+        # remove i,j,latitude, longitude coords
+        coords_to_remove = ["i", "j", "latitude", "longitude"]
         for coord in coords_to_remove:
             if coord in self.ds.coords:
                 self.ds = self.ds.drop_vars(coord)
         # remove any bounds data variables
-        bounds_vars = [v for v in self.ds.data_vars if 'bnds' in v.lower() or 'vertices' in v.lower()]
+        bounds_vars = [
+            v
+            for v in self.ds.data_vars
+            if "bnds" in v.lower() or "vertices" in v.lower()
+        ]
         for var in bounds_vars:
             if var in self.ds.data_vars:
                 self.ds = self.ds.drop_vars(var)
@@ -643,24 +816,31 @@ class RegridderManager:
             data = data.isel(time=time_index)
 
         data = data.where(np.isfinite(data), drop=False)
+        data.values[:] = np.ascontiguousarray(data.values)
         regridded_data = self.regridder(data)
         self.ds[self.varname] = regridded_data
         self.ds = self._trim_unnecessary_vals()
         return self.ds
 
     @staticmethod
-    def regrid_all_files_in_tree(watch_dir, subdir="reprojected", delete_original=False, verbose=True, fs=None, max_workers=1):
+    def regrid_all_files_in_tree(
+        watch_dir,
+        subdir="reprojected",
+        delete_original=False,
+        fs=None,
+        max_workers=1,
+    ):
         """
-        Scan all subdirectories of watch_dir, create a 'reprojected' folder in each, and regrid all new .nc files in parallel.
-        Only processes files that do not already have a regridded version.
+        Scan all subdirectories of watch_dir, create a 'reprojected' folder in each, and regrid all new .nc files
+        in parallel. Only processes files that do not already have a regridded version.
         """
 
         watch_dir = Path(watch_dir)
         files_to_regrid = []
         for ncfile in watch_dir.rglob("*.nc"):
-            if 'reprojected' in str(ncfile):
+            if "reprojected" in str(ncfile):
                 continue
-            if 'regrid_weights' in str(ncfile):
+            if "regrid_weights" in str(ncfile):
                 continue
             parent_dir = ncfile.parent
             out_dir = parent_dir / subdir
@@ -670,9 +850,6 @@ class RegridderManager:
                 continue
             files_to_regrid.append((ncfile, out_file))
 
-        from rich.console import Console
-        from rich.panel import Panel
-        from rich.text import Text
         console = Console()
 
         def handle_file(args):
@@ -683,15 +860,16 @@ class RegridderManager:
                 out_ds = ds.copy()
                 out_ds = regrid_mgr.regrid()
                 out_ds.to_netcdf(out_file)
-                if verbose:
-                    short_path = str(Path(*ncfile.parts[-6:]))
-                    console.print(f"[green]Regridded:[/green] {short_path}")
-                    # disappear after 2 seconds
+                short_path = str(Path(*ncfile.parts[-6:]))
+                console.print(f"[green]Regridded:[/green] {short_path}")
+                # disappear after 2 seconds
                 if delete_original:
                     ncfile.unlink()
             except Exception as e:
                 short_path = str(Path(*ncfile.parts[-6:]))
-                console.print(f"[red]Failed to regrid:[/red] {short_path} [red]{e}[/red]")
+                console.print(
+                    f"[red]Failed to regrid:[/red] {short_path} [red]{e}[/red]"
+                )
 
         if files_to_regrid:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -699,48 +877,60 @@ class RegridderManager:
             # TODO: Print summary panel at the end. Would require a refactor of the regrid_all_files_in_tree manager to be more like the Download class
             # console.print(Panel(f"[green]Successful:[/green] {self.success_count}\n[red]Failed:[/red] {self.fail_count}", title="Regridding Summary", style="bold blue"))
         else:
-            if verbose:
-                console.print("[yellow]\nNo new files to regrid.[/yellow]")
+            console.print("[yellow]\nNo new files to regrid.[/yellow]")
 
 
-CRITERIA_FP = read_yaml('/Users/rt582/Library/CloudStorage/OneDrive-UniversityofCambridge/cambridge/phd/esgpullplus/search.yaml')
-SEARCH_CRITERIA_CONFIG = CRITERIA_FP.get('search_criteria', {})
-META_CRITERIA_CONFIG = CRITERIA_FP.get('meta_criteria', {})
-META_CRITERIA_CONFIG['limit'] = META_CRITERIA_CONFIG['limit']
+def get_repo_root():
+    return Path(__file__).resolve().parent.parent
+
+
+REPO_ROOT = get_repo_root()
+CRITERIA_FP = read_yaml(REPO_ROOT / "search.yaml")
+SEARCH_CRITERIA_CONFIG = CRITERIA_FP.get("search_criteria", {})
+META_CRITERIA_CONFIG = CRITERIA_FP.get("meta_criteria", {})
+
 
 API = EsgpullAPI()
 
-    
+
 def main():
     # load configuration
+    files = SearchResults(
+        search_criteria=SEARCH_CRITERIA_CONFIG,
+        meta_criteria=META_CRITERIA_CONFIG,
+    ).run()
 
-    files = SearchResults(search_criteria=SEARCH_CRITERIA_CONFIG, meta_criteria=META_CRITERIA_CONFIG).run()
-    
     # # start processor running, if specified by commandline argument
     # if META_CRITERIA_CONFIG.get('process', False):
     #     asyncio.run(watch_and_reproject(watch_dir=api.esg.fs.data))
-    
+
     # TODO: group results in such a way that you get a coherent set of files (e.g. all the relevant timesteps for a particular source)
     DownloadSubset(
         files=files,
         fs=API.esg.fs,
-        output_dir=META_CRITERIA_CONFIG.get('output_dir', None),  # Optional output directory
-        subset=META_CRITERIA_CONFIG.get('subset'),  # Optional subset criteria for xarray
-        max_workers=META_CRITERIA_CONFIG.get('max_workers', 16)  # Default to 16 workers
+        output_dir=META_CRITERIA_CONFIG.get(
+            "output_dir", None
+        ),  # Optional output directory
+        subset=META_CRITERIA_CONFIG.get(
+            "subset"
+        ),  # Optional subset criteria for xarray
+        max_workers=META_CRITERIA_CONFIG.get(
+            "max_workers", 1
+        ),  # Default to 16 workers
     ).run()
-    
+
     # run regridding on all new files in the watch directory
-    RegridderManager.regrid_all_files_in_tree(watch_dir=API.esg.fs.data, fs=API.esg.fs)
-    
+    RegridderManager.regrid_all_files_in_tree(
+        watch_dir=API.esg.fs.data, fs=API.esg.fs
+    )
+
+
 if __name__ == "__main__":
-#     print('Starting async watcher...')
-#     watcher = AsyncRegridWatcher(watch_dir=API.esg.fs.data)
-#     watcher_thread = threading.Thread(target=lambda: asyncio.run(watcher.start()), daemon=True)
-#     watcher_thread.start()
     main()
-    
-    
-    
+#   print('Starting async watcher...')
+#   watcher = AsyncRegridWatcher(watch_dir=API.esg.fs.data)
+#   watcher_thread = threading.Thread(target=lambda: asyncio.run(watcher.start()), daemon=True)
+#   watcher_thread.start()
 
 
 # class AsyncRegridWatcher:
