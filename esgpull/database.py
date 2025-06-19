@@ -178,3 +178,24 @@ class Database:
                 if file.version != latest_version:
                     deprecated.append(file)
         return deprecated
+
+    def get_files_by_query(self, query, status=None):
+        """
+        Return all files linked to a query, optionally filtered by status.
+        Args:
+            query: Query object
+            status: FileStatus or list of FileStatus (optional)
+        Returns:
+            List of File objects
+        """
+        session = self.session
+        from esgpull.models import File, FileStatus
+        from esgpull.models.query import query_file_proxy
+        import sqlalchemy as sa
+        stmt = sa.select(File).join_from(query_file_proxy, File).where(query_file_proxy.c.query_sha == query.sha)
+        if status is not None:
+            if isinstance(status, list):
+                stmt = stmt.where(File.status.in_(status))
+            else:
+                stmt = stmt.where(File.status == status)
+        return list(session.scalars(stmt))
