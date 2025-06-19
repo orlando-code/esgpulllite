@@ -505,6 +505,8 @@ class RegridderManager:
         """
         self.fs = fs
         self.ds = ds.load()
+        self.success_count = 0
+        self.fail_count = 0
         self.periodic = periodic
         self.target_res = target_res
         self.varname = self._get_varname()
@@ -514,7 +516,8 @@ class RegridderManager:
         self.weight_dir = self.fs.data / "xesmf_regrid_weights"
         self.weight_dir.mkdir(exist_ok=True)
         self.regridder = self._get_or_create_regridder()
-
+    
+    
     def estimate_target_resolution(self):
         # TODO
         """
@@ -566,9 +569,15 @@ class RegridderManager:
         return self.ds
 
     def _make_grid_in(self):
-        lon2d = np.ascontiguousarray(self.ds['lon'].values)
-        lat2d = np.ascontiguousarray(self.ds['lat'].values)
-        return xa.Dataset({'lon': (['y', 'x'], lon2d), 'lat': (['y', 'x'], lat2d)})
+        lons = np.ascontiguousarray(self.ds['lon'].values)
+        lats = np.ascontiguousarray(self.ds['lat'].values)
+        
+        if lons.ndim == 1 and lats.ndim == 1:
+            return xa.Dataset({'lon': (['x'], lons), 'lat': (['y'], lats)})
+        elif lons.ndim == 2 and lats.ndim == 2:
+            return xa.Dataset({'lon': (['x', 'y'], lons), 'lat': (['x', 'y'], lats)})   # TODO: I think this is still sometimes failing (different for different files)
+        else:
+            raise ValueError(f"Unsupported dimensions: lon: {lons.ndim}, lat: {lats.ndim}. Expected 1D or 2D array.")
 
     def _standardise_lon_limits(self):
         lon = self.ds['lon'] if 'lon' in self.ds.coords else self.ds['longitude']
@@ -661,28 +670,37 @@ class RegridderManager:
                 continue
             files_to_regrid.append((ncfile, out_file))
 
+        from rich.console import Console
+        from rich.panel import Panel
+        from rich.text import Text
+        console = Console()
+
         def handle_file(args):
             ncfile, out_file = args
             try:
                 ds = xa.open_dataset(ncfile)
-                # Pick the first non-coord, non-bounds variable
                 regrid_mgr = RegridderManager(fs=fs, ds=ds)
                 out_ds = ds.copy()
                 out_ds = regrid_mgr.regrid()
                 out_ds.to_netcdf(out_file)
                 if verbose:
-                    print(f"Regridded: {str(Path(*egfp.parts[-6:]))}")
+                    short_path = str(Path(*ncfile.parts[-6:]))
+                    console.print(f"[green]Regridded:[/green] {short_path}")
+                    # disappear after 2 seconds
                 if delete_original:
                     ncfile.unlink()
             except Exception as e:
-                print(f"Failed to regrid {ncfile}: {e}")
+                short_path = str(Path(*ncfile.parts[-6:]))
+                console.print(f"[red]Failed to regrid:[/red] {short_path} [red]{e}[/red]")
 
         if files_to_regrid:
             with ThreadPoolExecutor(max_workers=max_workers) as executor:
                 executor.map(handle_file, files_to_regrid)
+            # TODO: Print summary panel at the end. Would require a refactor of the regrid_all_files_in_tree manager to be more like the Download class
+            # console.print(Panel(f"[green]Successful:[/green] {self.success_count}\n[red]Failed:[/red] {self.fail_count}", title="Regridding Summary", style="bold blue"))
         else:
             if verbose:
-                print("No new files to regrid.")
+                console.print("[yellow]\nNo new files to regrid.[/yellow]")
 
 
 CRITERIA_FP = read_yaml('/Users/rt582/Library/CloudStorage/OneDrive-UniversityofCambridge/cambridge/phd/esgpullplus/search.yaml')
