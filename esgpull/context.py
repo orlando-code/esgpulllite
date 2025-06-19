@@ -356,7 +356,7 @@ class Context:
         date_from: datetime | None = None,
         date_to: datetime | None = None,
     ) -> list[ResultSearch]:
-        if page_limit is None:
+        if page_limit is None:  # TODO: update this? What does the 50 represent?
             page_limit = self.config.api.page_limit
         if fields_param is None:
             if file:
