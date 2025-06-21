@@ -229,6 +229,9 @@ class SearchResults:
         except Exception:
             self.search_message("pre")
             self.do_search()
+            if self.results_df.empty:
+                print("[SearchResults] No results found for given criteria.")
+                return []
             self.search_message("post")
             self.sort_results_by_metadata()
             self.save_searches()
