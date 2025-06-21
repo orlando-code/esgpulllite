@@ -1,5 +1,15 @@
 # rich
-from rich.progress import Progress, BarColumn
+from rich.progress import (
+    Progress,
+    BarColumn,
+    TimeRemainingColumn,
+    TimeElapsedColumn,
+)
+import logging
+from datetime import datetime
+
+# custom
+from esgpull.custom import fileops
 
 
 class DownloadProgressUI:
@@ -13,16 +23,47 @@ class DownloadProgressUI:
             "[progress.percentage]{task.percentage:>3.0f}%",
             "•",
             "[progress.completed]{task.completed}/{task.total}",
+            "•",
+            TimeRemainingColumn(),
+            TimeElapsedColumn(),
             transient=True,
             expand=True,
             auto_refresh=True,
             refresh_per_second=10,
         )
         self.overall_task = None
-        self.status_counts = {"done": 0, "skipped": 0, "failed": 0}
+        self.status_counts = {
+            "done": 0,
+            "skipped": 0,
+            "failed": 0,
+            "unknown": 0,
+        }
         self.failed_files = []  # List of (file, error_message)
         self.file_task_ids = {}  # file -> task_id
         self.file_status = {}  # file -> status string
+        self._setup_logger()
+
+    def _setup_logger(self):
+        self.logger = logging.getLogger(f"download_errors_{id(self)}")
+        self.logger.setLevel(logging.ERROR)
+
+        # Create logs directory next to the current file
+        log_dir = fileops.get_repo_root() / "logs"
+        log_dir.mkdir(exist_ok=True)
+
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        log_file = log_dir / f"download_errors_{timestamp}.log"
+
+        handler = logging.FileHandler(log_file)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(levelname)s - %(message)s"
+        )
+        handler.setFormatter(formatter)
+
+        # Clear existing handlers and add the new one
+        if self.logger.hasHandlers():
+            self.logger.handlers.clear()
+        self.logger.addHandler(handler)
 
     def __enter__(self):
         self.progress.__enter__()
@@ -51,13 +92,17 @@ class DownloadProgressUI:
         self.file_status[fname] = status
         if status == "DONE":
             self.status_counts["done"] += 1
-        elif status == "SKIP":
+        elif status == "SKIPPED":
             self.status_counts["skipped"] += 1
         elif status == "FAIL":
             self.status_counts["failed"] += 1
+        # else:
+        #     print(status)
+        #     self.status_counts["unknown"] += 1
 
-    def add_failed(self, file, msg):
+    def add_failed(self, file, msg, exc_info=None):
         self.failed_files.append((file, msg))
+        self.logger.error(f"File: {file.filename} - {msg}", exc_info=exc_info)
 
     def complete_file(self, file):
         # Advance overall progress and mark file bar as complete
@@ -79,9 +124,11 @@ class DownloadProgressUI:
         from rich.table import Table
         from rich.panel import Panel
 
+        # Ensure the progress bar is cleared before printing summary
+        self.progress.stop()
+
         console = Console()
         table = Table(
-            title="Download Summary",
             show_header=True,
             header_style="bold magenta",
         )
@@ -94,7 +141,16 @@ class DownloadProgressUI:
             "[yellow]Skipped[/yellow]", str(self.status_counts["skipped"])
         )
         table.add_row("[red]Failed[/red]", str(self.status_counts["failed"]))
-        console.print(table)
+        # table.add_row(
+        #     "[blue]Unknown[/blue]", str(self.status_counts["unknown"])
+        # ) # TODO: fix
+        table.add_row(
+            "[white]Cancelled[/white]",
+            str(len(self.files) - sum(self.status_counts.values())),
+        )
+        console.print(
+            Panel(table, title="[white]Download Summary", border_style="white")
+        )
         if self.failed_files:
             file, msg = self.failed_files[0]
             console.print(
