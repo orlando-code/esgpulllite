@@ -13,6 +13,7 @@ def read_yaml(file_path):
 
 
 REPO_ROOT = get_repo_root()
-CRITERIA_FP = read_yaml(REPO_ROOT / "search.yaml")
-SEARCH_CRITERIA_CONFIG = CRITERIA_FP.get("search_criteria", {})
-META_CRITERIA_CONFIG = CRITERIA_FP.get("meta_criteria", {})
+CRITERIA_FP = REPO_ROOT / "search.yaml"
+CRITERIA = read_yaml(CRITERIA_FP)
+SEARCH_CRITERIA_CONFIG = CRITERIA.get("search_criteria", {})
+META_CRITERIA_CONFIG = CRITERIA.get("meta_criteria", {})
