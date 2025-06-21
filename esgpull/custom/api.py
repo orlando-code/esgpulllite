@@ -12,6 +12,7 @@ from esgpull.models import File
 
 # custom
 from esgpull.custom import search, download, regrid, fileops, api
+from rich import print as rich_print
 
 
 class EsgpullAPI:
@@ -306,25 +307,71 @@ def run():
     META_CRITERIA_CONFIG = CRITERIA_FP.get("meta_criteria", {})
     API = api.EsgpullAPI()
 
-    # load configuration
-    files = search.SearchResults(
-        search_criteria=SEARCH_CRITERIA_CONFIG,
-        meta_criteria=META_CRITERIA_CONFIG,
-    ).run()
+    # iterate through variables: otherwise, the dataframe will
+    if len(SEARCH_CRITERIA_CONFIG["variable"].split(",")) > 1:
+        variables = SEARCH_CRITERIA_CONFIG["variable"].split(",")
+        search_criteria = SEARCH_CRITERIA_CONFIG.copy()
+        for var in variables:
+            search_criteria["variable"] = var.strip()
 
-    download.DownloadSubset(
-        files=files,
-        fs=API.esg.fs,
-        output_dir=fileops.META_CRITERIA_CONFIG.get(
-            "output_dir", None
-        ),  # Optional output directory
-        subset=fileops.META_CRITERIA_CONFIG.get(
-            "subset"
-        ),  # Optional subset criteria for xarray
-        max_workers=fileops.META_CRITERIA_CONFIG.get(
-            "max_workers", 32
-        ),  # Default to 16 workers
-    ).run()
+            rich_print(
+                f"\n:mag: [bold]Searching for variable:[/bold] {var.strip()}"
+            )
+
+            # load configuration
+            files = search.SearchResults(
+                search_criteria=search_criteria,
+                meta_criteria=META_CRITERIA_CONFIG,
+            ).run()
+
+            if not files:
+                rich_print("No files found matching the search criteria.")
+                return
+
+            download.DownloadSubset(
+                files=files,
+                fs=API.esg.fs,
+                output_dir=fileops.META_CRITERIA_CONFIG.get(
+                    "output_dir", None
+                ),  # Optional output directory
+                subset=fileops.META_CRITERIA_CONFIG.get(
+                    "subset"
+                ),  # Optional subset criteria for xarray
+                max_workers=fileops.META_CRITERIA_CONFIG.get(
+                    "max_workers", 32
+                ),  # Default to 16 workers
+                batch_size=fileops.META_CRITERIA_CONFIG.get(
+                    "batch_size", 8
+                ),  # Default to 8 files per batch
+            ).run()
+    else:
+        # load configuration
+        files = search.SearchResults(
+            search_criteria=SEARCH_CRITERIA_CONFIG,
+            meta_criteria=META_CRITERIA_CONFIG,
+        ).run()
+
+        if not files:
+            print("No files found matching the search criteria.")
+            return
+
+        download.DownloadSubset(
+            files=files,
+            fs=API.esg.fs,
+            output_dir=fileops.META_CRITERIA_CONFIG.get(
+                "output_dir", None
+            ),  # Optional output directory
+            subset=fileops.META_CRITERIA_CONFIG.get(
+                "subset"
+            ),  # Optional subset criteria for xarray
+            max_workers=fileops.META_CRITERIA_CONFIG.get(
+                "max_workers", 32
+            ),  # Default to 16 workers
+            batch_size=fileops.META_CRITERIA_CONFIG.get(
+                "batch_size", 8
+            ),  # Default to 8 files per batch
+        ).run()
+
     if fileops.META_CRITERIA_CONFIG.get("regrid", False):
         # if regrid is enabled, run regridding
         print("Regridding enabled, running regridding...")
