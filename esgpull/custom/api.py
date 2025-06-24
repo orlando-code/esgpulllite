@@ -1,5 +1,9 @@
 from pathlib import Path
 from typing import Any, Optional, List, Dict
+import signal
+import sys
+import threading
+import time
 from esgpull.esgpuller import Esgpull
 from esgpull.cli.utils import (
     parse_query,
@@ -13,6 +17,51 @@ from esgpull.models import File
 # custom
 from esgpull.custom import search, download, regrid, fileops, api
 from rich import print as rich_print
+
+
+# Global flag for graceful shutdown
+_shutdown_requested = threading.Event()
+
+
+class GracefulInterruptHandler:
+    """Handle interruption signals gracefully."""
+
+    def __init__(self):
+        self.interrupted = False
+        self.original_sigint = signal.signal(
+            signal.SIGINT, self._signal_handler
+        )
+        self.original_sigterm = signal.signal(
+            signal.SIGTERM, self._signal_handler
+        )
+
+    def _signal_handler(self, signum, frame):
+        """Handle interrupt signals."""
+        signal_name = "SIGINT" if signum == signal.SIGINT else "SIGTERM"
+        if not self.interrupted:
+            rich_print(
+                f"\n[bold yellow]⚠️  {signal_name} received. Initiating graceful shutdown...[/bold yellow]"
+            )
+            rich_print("[yellow]• Stopping new downloads[/yellow]")
+            rich_print("[yellow]• Cleaning up active operations[/yellow]")
+            rich_print("[yellow]• Press Ctrl+C again to force quit[/yellow]")
+            self.interrupted = True
+            _shutdown_requested.set()
+            # Brief pause to show shutdown messages
+            time.sleep(0.5)
+        else:
+            rich_print(
+                "\n[bold red]💀 Force quit requested. Exiting immediately.[/bold red]"
+            )
+            sys.exit(1)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        # Restore original handlers
+        signal.signal(signal.SIGINT, self.original_sigint)
+        signal.signal(signal.SIGTERM, self.original_sigterm)
 
 
 class EsgpullAPI:
@@ -300,86 +349,203 @@ class EsgpullAPI:
         return None
 
 
-def run():
-    REPO_ROOT = fileops.get_repo_root()
-    CRITERIA_FP = fileops.read_yaml(REPO_ROOT / "search.yaml")
-    SEARCH_CRITERIA_CONFIG = CRITERIA_FP.get("search_criteria", {})
-    META_CRITERIA_CONFIG = CRITERIA_FP.get("meta_criteria", {})
-    API = api.EsgpullAPI()
+def search_and_download(search_criteria, meta_criteria, API=None):
+    """
+    Perform a search and download files based on the provided criteria.
+    """
+    # Check for shutdown request
+    if _shutdown_requested.is_set():
+        rich_print(
+            "[yellow]Shutdown requested, skipping search and download.[/yellow]"
+        )
+        return
 
-    # iterate through variables: otherwise, the dataframe will
-    if len(SEARCH_CRITERIA_CONFIG["variable"].split(",")) > 1:
-        variables = SEARCH_CRITERIA_CONFIG["variable"].split(",")
-        search_criteria = SEARCH_CRITERIA_CONFIG.copy()
-        for var in variables:
-            search_criteria["variable"] = var.strip()
+    # load configuration
+    files = search.SearchResults(
+        search_criteria=search_criteria,
+        meta_criteria=meta_criteria,
+    ).run()
 
-            rich_print(
-                f"\n:mag: [bold]Searching for variable:[/bold] {var.strip()}"
-            )
+    if not files:
+        rich_print("No files found matching the search criteria.")
+        return
 
-            # load configuration
-            files = search.SearchResults(
-                search_criteria=search_criteria,
-                meta_criteria=META_CRITERIA_CONFIG,
-            ).run()
+    # Check for shutdown request before starting download
+    if _shutdown_requested.is_set():
+        rich_print("[yellow]Shutdown requested, skipping download.[/yellow]")
+        return
 
-            if not files:
-                rich_print("No files found matching the search criteria.")
-                return
-
-            download.DownloadSubset(
-                files=files,
-                fs=API.esg.fs,
-                output_dir=fileops.META_CRITERIA_CONFIG.get(
-                    "output_dir", None
-                ),  # Optional output directory
-                subset=fileops.META_CRITERIA_CONFIG.get(
-                    "subset"
-                ),  # Optional subset criteria for xarray
-                max_workers=fileops.META_CRITERIA_CONFIG.get(
-                    "max_workers", 32
-                ),  # Default to 16 workers
-                batch_size=fileops.META_CRITERIA_CONFIG.get(
-                    "batch_size", 8
-                ),  # Default to 8 files per batch
-            ).run()
-    else:
-        # load configuration
-        files = search.SearchResults(
-            search_criteria=SEARCH_CRITERIA_CONFIG,
-            meta_criteria=META_CRITERIA_CONFIG,
-        ).run()
-
-        if not files:
-            print("No files found matching the search criteria.")
-            return
-
-        download.DownloadSubset(
+    try:
+        download_manager = download.DownloadSubset(
             files=files,
             fs=API.esg.fs,
-            output_dir=fileops.META_CRITERIA_CONFIG.get(
-                "output_dir", None
-            ),  # Optional output directory
-            subset=fileops.META_CRITERIA_CONFIG.get(
-                "subset"
-            ),  # Optional subset criteria for xarray
-            max_workers=fileops.META_CRITERIA_CONFIG.get(
-                "max_workers", 32
-            ),  # Default to 16 workers
-            batch_size=fileops.META_CRITERIA_CONFIG.get(
-                "batch_size", 8
-            ),  # Default to 8 files per batch
-        ).run()
-
-    if fileops.META_CRITERIA_CONFIG.get("regrid", False):
-        # if regrid is enabled, run regridding
-        print("Regridding enabled, running regridding...")
-        # create a RegridderManager instance
-        regrid.RegridderManager(
-            fs=API.esg.fs,
-            watch_dir=API.esg.fs.data,
+            output_dir=meta_criteria.get("output_dir", None),
+            subset=meta_criteria.get("subset"),
+            max_workers=meta_criteria.get("max_workers", 32),
         )
+
+        # Pass shutdown event to download manager
+        download_manager._shutdown_requested = _shutdown_requested
+
+        # Show download start message with interrupt info
+        rich_print(
+            f"[blue]📥 Starting download of {len(files)} files... (Ctrl+C to stop gracefully)[/blue]"
+        )
+        download_manager.run()
+
+    except KeyboardInterrupt:
+        rich_print("[yellow]Download interrupted by user.[/yellow]")
+        raise
+    except Exception as e:
+        rich_print(f"[red]Download failed with error: {e}[/red]")
+        raise
+
+
+def remove_part_files(main_dir: Path) -> None:
+    """
+    Remove part files from the main directory.
+    This is useful for cleaning up temporary files after downloads.
+    """
+    part_files = list(main_dir.glob("*.part"))
+    if not part_files:
+        rich_print("No .part files found to remove.")
+        return
+
+    for part_file in part_files:
+        try:
+            part_file.unlink()
+            rich_print(f"Removed .part file: {part_file}")
+        except Exception as e:
+            rich_print(f"Failed to remove {part_file}: {e}")
+
+
+def run():
+    """Main run function with graceful interrupt handling."""
+    with GracefulInterruptHandler():
+        try:
+            # Show startup message with interrupt info
+            rich_print(
+                "[dim]💡 Tip: Press Ctrl+C at any time for graceful shutdown[/dim]"
+            )
+
+            REPO_ROOT = fileops.get_repo_root()
+            CRITERIA_FP = fileops.read_yaml(REPO_ROOT / "search.yaml")
+            SEARCH_CRITERIA_CONFIG = CRITERIA_FP.get("search_criteria", {})
+            META_CRITERIA_CONFIG = CRITERIA_FP.get("meta_criteria", {})
+            API = api.EsgpullAPI()
+
+            # remove any existing .part files in the main directory to avoid conflicts
+            remove_part_files(API.esg.fs.data)
+
+            # Convert comma-separated strings to lists for iteration
+            exp_str = SEARCH_CRITERIA_CONFIG.get("experiment_id", "")
+            experiments = [e.strip() for e in exp_str.split(",") if e.strip()]
+
+            var_str = SEARCH_CRITERIA_CONFIG.get("variable", "")
+            variables = [v.strip() for v in var_str.split(",") if v.strip()]
+
+            # Use placeholders to ensure loops run at least once, even if no values are specified
+            iter_exps = experiments if experiments else [None]
+            iter_vars = variables if variables else [None]
+
+            total_combinations = len(iter_vars) * len(iter_exps)
+            current_combination = 0
+
+            for var in iter_vars:
+                for exp in iter_exps:
+                    # Check for shutdown request at start of each iteration
+                    if _shutdown_requested.is_set():
+                        rich_print(
+                            "[yellow]Shutdown requested, stopping processing.[/yellow]"
+                        )
+                        return
+
+                    current_combination += 1
+                    search_criteria = SEARCH_CRITERIA_CONFIG.copy()
+                    print_parts = []
+
+                    # Override criteria and build print message only if iterating on that criterion
+                    if exp is not None:
+                        search_criteria["experiment_id"] = exp
+                        print_parts.append(
+                            f":test_tube: [bold]Experiment:[/bold] {exp.upper()}"
+                        )
+
+                    if var is not None:
+                        search_criteria["variable"] = var
+                        print_parts.append(
+                            f":mag: [bold]Variable:[/bold] {var.upper()}"
+                        )
+
+                    # Show progress
+                    progress_msg = f"[dim]({current_combination}/{total_combinations})[/dim]"
+
+                    if print_parts:
+                        rich_print(
+                            f"\n{progress_msg} " + " ".join(print_parts)
+                        )
+                    else:
+                        rich_print(
+                            f"\n{progress_msg} :mag: [bold]Searching with specified criteria...[/bold]"
+                        )
+
+                    try:
+                        search_and_download(
+                            search_criteria=search_criteria,
+                            meta_criteria=META_CRITERIA_CONFIG,
+                            API=API,
+                        )
+                    except KeyboardInterrupt:
+                        rich_print(
+                            "[yellow]Processing interrupted by user.[/yellow]"
+                        )
+                        break
+                    except Exception as e:
+                        rich_print(
+                            f"[red]Error processing combination: {e}[/red]"
+                        )
+                        continue
+
+                # Break outer loop if interrupted
+                if _shutdown_requested.is_set():
+                    break
+
+            # Check if regridding should run (only if not interrupted)
+            if not _shutdown_requested.is_set() and META_CRITERIA_CONFIG.get(
+                "regrid", False
+            ):
+                rich_print(
+                    "[blue]Regridding enabled, running regridding...[/blue]"
+                )
+                try:
+                    regrid.RegridderManager(
+                        fs=API.esg.fs,
+                        watch_dir=API.esg.fs.data,
+                    )
+                except KeyboardInterrupt:
+                    rich_print(
+                        "[yellow]Regridding interrupted by user.[/yellow]"
+                    )
+                except Exception as e:
+                    rich_print(f"[red]Regridding failed: {e}[/red]")
+
+            if _shutdown_requested.is_set():
+                rich_print(
+                    "\n[bold green]✅ Graceful shutdown completed successfully.[/bold green]"
+                )
+                rich_print(
+                    "[dim]All downloads stopped cleanly. No data was lost.[/dim]"
+                )
+            else:
+                rich_print(
+                    "\n[bold green]✅ Processing completed successfully.[/bold green]"
+                )
+
+        except KeyboardInterrupt:
+            rich_print("[yellow]Main process interrupted.[/yellow]")
+        except Exception as e:
+            rich_print(f"[red]Unexpected error in main process: {e}[/red]")
+            raise
 
 
 if __name__ == "__main__":
