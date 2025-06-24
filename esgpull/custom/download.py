@@ -1,27 +1,19 @@
 # general
 import time
 from pathlib import Path
-import logging
-import contextlib
 import threading
 
 # third-party
-from aiohttp import ClientResponseError
-
+import requests
 
 # spatial
 import xarray as xa
-import dask
 
 # parallel
 import concurrent.futures
-from concurrent.futures import TimeoutError
 
 # rich
 from rich.console import Console
-
-# from rich.table import Table
-# from rich.panel import Panel
 
 # custom
 from esgpull.custom import ui
@@ -35,18 +27,17 @@ class DownloadSubset:
         output_dir=None,
         subset=None,
         max_workers=4,
-        batch_size=50,
+        force_direct_download=False,
     ):
         self.files = files
         self.fs = fs
         self.output_dir = output_dir
         self.subset = subset
-        self.max_workers = max_workers
-        self.batch_size = batch_size
-        self.last_activity_time = 0
-
-    def _reset_activity_timer(self):
-        self.last_activity_time = time.time()
+        self.max_workers = (
+            max_workers if max_workers < len(files) else len(files)
+        )
+        self.force_direct_download = force_direct_download
+        self._shutdown_requested = threading.Event()
 
     def get_file_path(self, file):
         if self.output_dir:
@@ -56,281 +47,294 @@ class DownloadSubset:
 
     def file_exists(self, file):
         file_path = self.get_file_path(file)
-        return file_path.exists()
-
-    def _save_file(self, ui, ds, file):
-        file_path = self.get_file_path(file)
-        tmp_file_path = file_path.with_suffix(file_path.suffix + ".part")
-        try:
-            ui.set_status(file, "SAVING", "yellow")
-            tmp_file_path.parent.mkdir(parents=True, exist_ok=True)
-            ds.to_netcdf(tmp_file_path)
-            tmp_file_path.rename(file_path)
-            ui.set_status(file, "DONE", "green")
-        except Exception as e:
-            ui.set_status(file, "FAIL", "red")
-            ui.add_failed(file, f"FAIL (save): {e}", exc_info=e)
-        finally:
-            ui.complete_file(file)
+        exists = file_path.exists() and file_path.stat().st_size > 0
+        if not exists:
+            # Clean up any leftover .part files
+            part_file = file_path.with_suffix(file_path.suffix + ".part")
+            if part_file.exists():
+                try:
+                    part_file.unlink()
+                except Exception:
+                    pass
+        return exists
 
     def run(self):
+        """Simple download workflow without complex threading."""
         file_str = "files" if len(self.files) > 1 else "file"
         console = Console()
         console.print(
-            f"Attempting download of {len(self.files)} {file_str} in batches of {self.batch_size}..."
+            f"Attempting download of {len(self.files)} {file_str}..."
         )
+
         start_time = time.localtime()
         console.print(
             f":clock3: START: {time.strftime('%Y-%m-%d %H:%M:%S', start_time)}\n"
         )
 
-        # Helper class for Dask progress, defined once
-        from dask.callbacks import Callback
+        # Filter out existing files
+        files_to_download = [f for f in self.files if not self.file_exists(f)]
 
-        class FileChunkProgress(Callback):
-            def __init__(
-                self, downloader, file, ui, total_chunks, data_var_names
-            ):
-                self.downloader = downloader
-                self.file = file
-                self.ui = ui
-                self.total_chunks = total_chunks
-                self.loaded_chunks = 0
-                self.lock = threading.Lock()
-                self.data_var_names = data_var_names
+        if not files_to_download:
+            console.print("All files already exist, nothing to download.")
+            return
 
-            def _start_state(self, dsk, state):
-                self.ui.update_file_progress(self.file, 0, self.total_chunks)
-                self.downloader._reset_activity_timer()
+        console.print(f"Downloading {len(files_to_download)} new files...")
 
-            def _posttask(self, key, result, dsk, state, id):
-                if isinstance(key, tuple) and key[0] in self.data_var_names:
-                    with self.lock:
-                        self.downloader._reset_activity_timer()
-                        self.loaded_chunks += 1
-                        self.ui.update_file_progress(
-                            self.file, self.loaded_chunks
-                        )
+        # Simple UI without complex threading
+        with ui.DownloadProgressUI(files_to_download) as ui_instance:
+            # Process files in parallel
+            with concurrent.futures.ThreadPoolExecutor(
+                max_workers=self.max_workers
+            ) as executor:
+                futures = {
+                    executor.submit(
+                        self._process_file_simple, file, ui_instance
+                    ): file
+                    for file in files_to_download
+                }
 
-        # Helper function to open a single dataset lazily, handling URL fallback
-        def open_ds(file):
-            try:
-                # First attempt with original URL
-                ds = xa.open_dataset(
-                    file.url, engine="h5netcdf", chunks={"time": 2}
-                )
-                return (file, ds, None)
-            except (ClientResponseError, FileNotFoundError):
-                # Fallback with #mode=bytes
-                try:
-                    url_bytes_mode = f"{file.url}#mode=bytes"
-                    ds = xa.open_dataset(
-                        url_bytes_mode, engine="h5netcdf", chunks={"time": 2}
-                    )
-                    return (file, ds, None)
-                except Exception as e:
-                    return (file, None, e)  # Fallback failed
-            except Exception as e:
-                return (
-                    file,
-                    None,
-                    e,
-                )  # Initial attempt failed for other reason
-
-        with ui.DownloadProgressUI(self.files) as ui_instance:
-            threads = []
-
-            def complete_file_after_delay(ui, file, delay):
-                time.sleep(delay)
-                task_id = ui.file_task_ids.get(file.file_id)
-                if task_id is not None:
-                    ui.progress.update(task_id, visible=False)
-                    ui.progress.advance(ui.overall_task)
-
-            try:
-                num_batches = (
-                    len(self.files) + self.batch_size - 1
-                ) // self.batch_size
-                for i in range(0, len(self.files), self.batch_size):
-                    initial_batch_files = self.files[i : i + self.batch_size]
-                    batch_files = []
-                    for file in initial_batch_files:
-                        if self.file_exists(file):
-                            ui_instance.set_status(file, "SKIPPED", "yellow")
-                            thread = threading.Thread(
-                                target=complete_file_after_delay,
-                                args=(ui_instance, file, 2),
-                            )
-                            thread.start()
-                            threads.append(thread)
-                        else:
-                            batch_files.append(file)
-
-                    if not batch_files:
-                        continue
-
-                    console.print(
-                        f"\n[bold cyan]Processing batch {i // self.batch_size + 1}/{num_batches}...[/bold cyan]"
-                    )
-
-                    # Step 1: Open all datasets in the batch in parallel (metadata only)
-                    with concurrent.futures.ThreadPoolExecutor(
-                        max_workers=self.max_workers
-                    ) as executor:
-                        results = list(executor.map(open_ds, batch_files))
-
-                    datasets_to_process = []
-                    for file, ds, err in results:
-                        if err is not None or ds is None:
-                            ui_instance.set_status(file, "FAIL", "red")
-                            ui_instance.add_failed(
-                                file, f"FAIL (open): {err}", exc_info=err
-                            )
-                            ui_instance.complete_file(file)
-                        else:
-                            # Apply subsetting if needed
-                            if self.subset:
-                                missing_dims = [
-                                    dim
-                                    for dim in self.subset
-                                    if dim not in ds.dims
-                                    and dim not in ds.coords
-                                ]
-                                remaining_subset_dims = {
-                                    k: v
-                                    for k, v in self.subset.items()
-                                    if k not in missing_dims
-                                }
-                                if remaining_subset_dims:
-                                    ds = ds.isel(**remaining_subset_dims)
-
-                            datasets_to_process.append(
-                                {"file": file, "ds": ds}
-                            )
-
-                    if not datasets_to_process:
-                        continue
-
-                    # Step 2: Let Dask compute all datasets in the batch in parallel
-                    callbacks = []
-                    computations = []
-                    for item in datasets_to_process:
-                        file, ds = item["file"], item["ds"]
-                        total_chunks = (
-                            sum(
-                                v.data.npartitions
-                                for v in ds.data_vars.values()
-                                if hasattr(v.data, "npartitions")
-                            )
-                            or 1
-                        )
-                        data_var_names = {
-                            v.data.name
-                            for v in ds.data_vars.values()
-                            if hasattr(v.data, "name")
-                        }
-                        callbacks.append(
-                            FileChunkProgress(
-                                self,
-                                file,
-                                ui_instance,
-                                total_chunks,
-                                data_var_names,
-                            )
-                        )
-                        computations.append(
-                            ds
-                        )  # We want to compute the ds object
-                        ui_instance.set_status(file, "LOADING", "cyan")
-
-                    try:
-                        with dask.config.set(scheduler="threads"):
-                            with contextlib.ExitStack() as stack:
-                                for cb in callbacks:
-                                    stack.enter_context(cb)
-
-                                from concurrent.futures import (
-                                    ThreadPoolExecutor,
-                                )
-
-                                # Use an executor for the entire dask.compute call to apply a timeout
-                                executor = ThreadPoolExecutor(max_workers=1)
-                                future = executor.submit(
-                                    dask.compute,
-                                    *computations,
-                                    scheduler="threads",
-                                )
-                                # The result of dask.compute is a tuple of loaded datasets
-                                # loaded_data_tuple = future.result(
-                                #     timeout=1200
-                                # )  # 20-minute timeout for the whole batch
-
-                                self._reset_activity_timer()
-                                inactivity_timeout = 120  # 2 minutes
-                                loaded_data_tuple = None
-                                while True:
-                                    try:
-                                        loaded_data_tuple = future.result(
-                                            timeout=1
-                                        )
-                                        break  # Succeeded
-                                    except TimeoutError:
-                                        if (
-                                            time.time()
-                                            - self.last_activity_time
-                                            > inactivity_timeout
-                                        ):
-                                            future.cancel()  # Attempt to cancel the underlying task
-                                            raise TimeoutError(
-                                                f"Inactivity timeout of {inactivity_timeout}s exceeded for batch."
-                                            )
-
-                        # Step 3: Save the loaded datasets
-                        for i, item in enumerate(datasets_to_process):
-                            file = item["file"]
-                            # The loaded data is a tuple of xarray.Dataset objects
-                            loaded_ds = loaded_data_tuple[i]
-                            self._save_file(ui_instance, loaded_ds, file)
-
-                    except TimeoutError:
-                        logging.error(
-                            f"Dask compute timed out for batch starting with {datasets_to_process[0]['file'].filename}"
-                        )
-                        for item in datasets_to_process:
-                            file = item["file"]
-                            ui_instance.set_status(file, "FAIL", "red")
-                            ui_instance.add_failed(
-                                file, "FAIL: Batch timed out during compute"
-                            )
-                            ui_instance.complete_file(file)
-                        continue  # Move to the next batch
-                    except Exception as e:
-                        logging.error(
-                            f"Dask compute failed for batch: {e}",
-                            exc_info=True,
-                        )
-                        for item in datasets_to_process:
-                            file = item["file"]
-                            ui_instance.set_status(file, "FAIL", "red")
-                            ui_instance.add_failed(
-                                file, f"FAIL (compute): {e}", exc_info=e
-                            )
-                            ui_instance.complete_file(file)
-
-            except KeyboardInterrupt:
-                console.print(
-                    "\n[bold red]Download interrupted by user. Shutting down workers...[/bold red]"
-                )
-            finally:
-                for thread in threads:
-                    thread.join()
-                ui_instance.print_summary()
+                # Wait for completion
+                for future in concurrent.futures.as_completed(futures):
+                    if self._shutdown_requested.is_set():
+                        break
 
         end_time = time.localtime()
         console.print(
             f"\n:clock3: END: {time.strftime('%Y-%m-%d %H:%M:%S', end_time)}"
         )
-        elapsed = time.mktime(end_time) - time.mktime(start_time)
-        console.print(
-            f":white_check_mark: Script completed in {elapsed:.1f} seconds."
-        )
+
+    def _process_file_simple(self, file, ui_instance):
+        """Simple file processing without complex error handling."""
+        try:
+            ui_instance.set_status(file, "STARTING", "cyan")
+
+            # Check if we should use direct download
+            if (
+                self._is_direct_download_needed(file)
+                or self.force_direct_download
+            ):
+                success = self._download_file_direct(file, ui_instance)
+            else:
+                success = self._download_via_xarray(file, ui_instance)
+
+            if success:
+                ui_instance.set_status(file, "DONE", "green")
+                # Hide completed files after 3 seconds to declutter
+                self._hide_file_after_delay(file, ui_instance, 3)
+            else:
+                ui_instance.set_status(file, "FAILED", "red")
+
+        except Exception as e:
+            ui_instance.set_status(file, "ERROR", "red")
+            ui_instance.add_failed(file, f"Error: {e}", e)
+
+    def _is_direct_download_needed(self, file):
+        """Check if direct download should be used."""
+        if self.force_direct_download:
+            return True
+        else:
+            return False
+
+    def _download_via_xarray(self, file, ui_instance):
+        """Download file via xarray (load -> save)."""
+        try:
+            ui_instance.set_status(file, "OPENING", "cyan")
+
+            # Try to open with xarray
+            ds = self._open_dataset_simple(file)
+            if ds is None:
+                return False
+
+            # Apply subset if needed
+            if self.subset:
+                subset_dims = {
+                    k: v
+                    for k, v in self.subset.items()
+                    if k in ds.dims or k in ds.coords
+                }
+                ds = ds.isel(**subset_dims)
+
+            # Load data
+            ui_instance.set_status(file, "LOADING", "blue")
+
+            # Simple progress tracking for xarray loading
+            data_vars = list(ds.data_vars.keys())
+            total_vars = len(data_vars)
+
+            if total_vars > 1:
+                # Load variables one by one with progress updates for multi-variable datasets
+                for i, var_name in enumerate(data_vars):
+                    if hasattr(ds[var_name].data, "compute"):
+                        ds[var_name].load()
+                    ui_instance.update_file_progress(file, i + 1, total_vars)
+            else:
+                # For single variable datasets, just load normally
+                ds.load()
+
+            # Save file
+            ui_instance.set_status(file, "SAVING", "yellow")
+            return self._save_dataset(file, ds)
+
+        except Exception as e:
+            print(f"xarray download failed for {file.filename}: {e}")
+            return False
+
+    def _download_file_direct(self, file, ui_instance):
+        """Simple direct HTTP download."""
+        file_path = self.get_file_path(file)
+        temp_path = file_path.with_suffix(file_path.suffix + ".part")
+
+        try:
+            ui_instance.set_status(file, "DOWNLOADING", "blue")
+
+            # Check for existing download
+            if temp_path.exists():
+                time.sleep(2)  # Wait briefly for other instance
+                if file_path.exists() and file_path.stat().st_size > 0:
+                    return True  # Another instance completed it
+
+            # Download
+            response = requests.get(file.url, stream=True, timeout=(30, 300))
+            response.raise_for_status()
+
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            if temp_path.exists():
+                temp_path.unlink()
+
+            with open(temp_path, "wb") as f:
+                downloaded = 0
+                total_size = int(response.headers.get("content-length", 0))
+
+                for chunk in response.iter_content(chunk_size=8192):
+                    if chunk and not self._shutdown_requested.is_set():
+                        f.write(chunk)
+                        downloaded += len(chunk)
+
+                        # Update progress every 64KB to avoid UI spam
+                        if downloaded % (64 * 1024) == 0 and total_size > 0:
+                            ui_instance.update_file_progress(
+                                file, downloaded, total_size
+                            )
+
+            # Atomic rename
+            if temp_path.exists() and temp_path.stat().st_size > 0:
+                temp_path.rename(file_path)
+                return True
+
+        except Exception as e:
+            print(f"Direct download failed for {file.filename}: {e}")
+            # Cleanup
+            for path in [temp_path, file_path]:
+                if path.exists():
+                    try:
+                        path.unlink()
+                    except Exception:
+                        pass
+
+        return False
+
+    def _open_dataset_simple(self, file):
+        """Simple dataset opening with fallback."""
+        engines = ["h5netcdf", "netcdf4"]
+
+        for engine in engines:
+            try:
+                ds = xa.open_dataset(
+                    file.url,
+                    engine=engine,
+                    chunks={"time": 6},
+                    decode_times=False,
+                    cache=False,
+                )
+                return ds
+            except Exception:
+                try:
+                    # Try bytes mode
+                    ds = xa.open_dataset(
+                        f"{file.url}#mode=bytes",
+                        engine=engine,
+                        chunks={"time": 6},
+                        decode_times=False,
+                        cache=False,
+                    )
+                    return ds
+                except Exception:
+                    continue
+
+        return None
+
+    def _save_dataset(self, file, ds):
+        """Simple dataset saving with attribute cleaning."""
+        file_path = self.get_file_path(file)
+        temp_path = file_path.with_suffix(file_path.suffix + ".part")
+
+        try:
+            # Clean attributes
+            ds = self._clean_attributes(ds)
+
+            # Save to temp file
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            if temp_path.exists():
+                temp_path.unlink()
+
+            ds.to_netcdf(temp_path)
+
+            # Verify and rename
+            if temp_path.exists() and temp_path.stat().st_size > 0:
+                temp_path.rename(file_path)
+                return True
+
+        except Exception as e:
+            print(f"Save failed for {file.filename}: {e}")
+            # Cleanup
+            for path in [temp_path, file_path]:
+                if path.exists():
+                    try:
+                        path.unlink()
+                    except Exception:
+                        pass
+
+        return False
+
+    def _clean_attributes(self, ds):
+        """Clean dataset attributes to prevent encoding errors."""
+
+        def safe_str(val):
+            if val is None:
+                return ""
+            try:
+                return str(val).encode("utf-8", "replace").decode("utf-8")
+            except Exception:
+                return ""
+
+        # Clean global attributes
+        ds.attrs = {k: safe_str(v) for k, v in ds.attrs.items()}
+
+        # Clean variable attributes
+        for var in ds.variables.values():
+            var.attrs = {k: safe_str(v) for k, v in var.attrs.items()}
+
+        return ds
+
+    def _hide_file_after_delay(self, file, ui_instance, delay_seconds):
+        """Hide a completed file from the UI after a delay to declutter."""
+
+        def hide_file():
+            time.sleep(delay_seconds)
+            try:
+                # Check if the UI instance has a method to hide files
+                if hasattr(ui_instance, "hide_file"):
+                    ui_instance.hide_file(file)
+                elif hasattr(ui_instance, "file_task_ids") and hasattr(
+                    ui_instance, "progress"
+                ):
+                    # Fallback: try to hide the progress bar directly
+                    task_id = ui_instance.file_task_ids.get(file.file_id)
+                    if task_id is not None:
+                        ui_instance.progress.update(task_id, visible=False)
+            except Exception:
+                pass  # Silently ignore if hiding fails
+
+        # Run the hide operation in a separate thread so it doesn't block
+        hide_thread = threading.Thread(target=hide_file, daemon=True)
+        hide_thread.start()
