@@ -2,10 +2,13 @@
 import numpy as np
 import hashlib
 from pathlib import Path
+import tempfile
+import re
 
 # spatial
 import xarray as xa
 import xesmf as xe
+from cdo import Cdo
 
 # parallel
 from concurrent.futures import ThreadPoolExecutor
@@ -36,21 +39,72 @@ class RegridderManager:
         self.weight_dir.mkdir(exist_ok=True)
         self.regridder = self._get_or_create_regridder()
 
-    # def estimate_target_resolution(self):
-    #     # TODO
-    #     """
-    #     Estimate target resolution based on the dataset's native grid.
-    #     If target_res is not provided, use the native resolution of the dataset.
-    #     """
-    #     if self.target_res is not None:
-    #         return self.target_res
-    #     lon = (
-    #         self.ds["lon"] if "lon" in self.ds.coords else self.ds["longitude"]
-    #     )
-    #     lat = (
-    #         self.ds["lat"] if "lat" in self.ds.coords else self.ds["latitude"]
-    #     )
-    #     lon_res = np.abs(lon[1] - lon[0])
+    def get_target_resolution(self):
+        # TODO
+        """
+        Estimate target resolution based on the dataset's native grid.
+        If target_res is not provided, use the native resolution of the dataset.
+        """
+        res = self.ds.attrs.get("nominal_resolution", None)
+        if res is None:
+            # Try to infer resolution from coordinates
+            res = self._infer_resolution_from_coords()
+        else:
+            res = str(res).lower().replace(" ", "")
+            if m := re.match(r"([\d.]+)km", res):
+                if res == "10":
+                    res = (0.1, 0.1)
+                elif res == "25":
+                    res = (0.25, 0.25)
+                elif res == "50":
+                    res = (0.5, 0.5)
+                else:
+                    res = float(res)
+            if m := re.match(r"([\d.]+)x([\d.]+)degree", res):
+                res = (float(m.group(1)), float(m.group(2)))
+        # assume res is a tuple (lon_res, lat_res) and the same
+        if isinstance(res, (int, float)):
+            res = (res, res)
+
+    def _infer_resolution_from_coords(self):
+        """
+        Infer resolution from the dataset's coordinates.
+        Assumes coordinates are evenly spaced.
+        Returns (1, 1) if unable to infer.
+        """
+        try:
+            lon = (
+                self.ds["lon"]
+                if "lon" in self.ds.coords
+                else self.ds["longitude"]
+            )
+            lat = (
+                self.ds["lat"]
+                if "lat" in self.ds.coords
+                else self.ds["latitude"]
+            )
+            if (
+                lon.ndim == 1
+                and lat.ndim == 1
+                and len(lon) > 1
+                and len(lat) > 1
+            ):
+                lon_res = float(np.abs(lon[1] - lon[0]))
+                lat_res = float(np.abs(lat[1] - lat[0]))
+            elif (
+                lon.ndim == 2
+                and lat.ndim == 2
+                and lon.shape[0] > 1
+                and lon.shape[1] > 1
+            ):
+                lon_res = float(np.abs(lon[:, 1] - lon[:, 0]).mean())
+                lat_res = float(np.abs(lat[1, :] - lat[0, :]).mean())
+            else:
+                # Fallback if dimensions are not as expected
+                return (1, 1)
+            return (lon_res, lat_res)
+        except Exception:
+            return (1, 1)
 
     def _get_varname(self, ncfile=None):
         varname = None
@@ -206,6 +260,74 @@ class RegridderManager:
         self.ds = self._trim_unnecessary_vals()
         return self.ds
 
+    def regrid_with_cdo(
+        self,
+        ds: xa.Dataset,
+        variable: str,
+        grid_type: str = "remapcon",  # options: remapnn, remapbil, remapcon
+        xsize: int = 360,
+        ysize: int = 180,
+        xfirst: float = -179.5,
+        xinc: float = 1.0,
+        yfirst: float = -89.5,
+        yinc: float = 1.0,
+    ) -> xa.Dataset:
+        """
+        Regrid an unstructured xarray.Dataset to a regular lat-lon grid using CDO.
+
+        Parameters
+        ----------
+        ds : xa.Dataset
+            Input dataset with unstructured grid (e.g., with lat_bnds/lon_bnds).
+        variable : str
+            Name of the variable to regrid.
+        grid_type : str
+            CDO regridding method: 'remapnn', 'remapbil', or 'remapcon'.
+        xsize, ysize : int
+            Output grid dimensions (longitude × latitude).
+        xfirst, yfirst : float
+            Starting coordinates for the grid.
+        xinc, yinc : float
+            Grid spacing in degrees.
+
+        Returns
+        -------
+        xa.Dataset
+            Regridded dataset with regular lat-lon grid.
+        """
+        cdo = Cdo()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            input_path = Path(tmpdir) / "input.nc"
+            output_path = Path(tmpdir) / "output.nc"
+            gridfile_path = Path(tmpdir) / "grid.txt"
+
+            # Save dataset to disk
+            ds[[variable]].to_netcdf(input_path)
+
+            # Create CDO target grid description
+            with open(gridfile_path, "w") as f:
+                f.write(
+                    f"""gridtype = lonlat
+    xsize = {xsize}
+    ysize = {ysize}
+    xfirst = {xfirst}
+    xinc = {xinc}
+    yfirst = {yfirst}
+    yinc = {yinc}
+    """
+                )
+
+            # Run CDO regridding
+            getattr(cdo, grid_type)(
+                gridfile_path, input=input_path, output=output_path
+            )
+
+            # Load result back into xarray
+            ds_out = xa.open_dataset(output_path)
+
+        return ds_out
+
     @staticmethod
     def regrid_all_files_in_tree(
         watch_dir,
@@ -240,17 +362,40 @@ class RegridderManager:
             ncfile, out_file = args
             try:
                 ds = xa.open_dataset(ncfile)
-                regrid_mgr = RegridderManager(fs=fs, ds=ds)
-                out_ds = ds.copy()
-                out_ds = regrid_mgr.regrid()
-                out_ds.to_netcdf(out_file)
                 short_path = str(Path(*ncfile.parts[-6:]))
-                console.print(f"[green]Regridded:[/green] {short_path}")
-                # disappear after 2 seconds
-                if delete_original:
-                    ncfile.unlink()
+
+                if "ncells" in ds.dims:  # unstructured grid, use CDO
+                    varname = RegridderManager._get_varname(ds)
+                    if varname is None:
+                        console.print(
+                            f"[red]No suitable variable found in {ncfile}[/red]"
+                        )
+                        return
+                    # get resolution
+                    lat_res, lon_res = RegridderManager.get_target_resolution()
+                    xsize = int(360 / lon_res)
+                    ysize = int(180 / lat_res)
+                    out_ds = RegridderManager.regrid_with_cdo(
+                        ds, variable=varname, xsize=xsize, ysize=ysize
+                    )
+                    out_ds.to_netcdf(out_file)
+                    console.print(
+                        f"[green]Regridded with CDO:[/green] {short_path}"
+                    )
+                    if delete_original:
+                        ncfile.unlink()
+
+                else:
+
+                    regrid_mgr = RegridderManager(fs=fs, ds=ds)
+                    out_ds = ds.copy()
+                    out_ds = regrid_mgr.regrid()
+                    out_ds.to_netcdf(out_file)
+                    console.print(f"[green]Regridded:[/green] {short_path}")
+                    # disappear after 2 seconds
+                    if delete_original:
+                        ncfile.unlink()
             except Exception as e:
-                short_path = str(Path(*ncfile.parts[-6:]))
                 console.print(
                     f"[red]Failed to regrid:[/red] {short_path} [red]{e}[/red]"
                 )
