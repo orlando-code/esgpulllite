@@ -2,7 +2,7 @@
 from rich.progress import (
     Progress,
     BarColumn,
-    TimeRemainingColumn,
+    # TimeRemainingColumn,
     TimeElapsedColumn,
 )
 import logging
@@ -24,7 +24,7 @@ class DownloadProgressUI:
             "•",
             "[progress.completed]{task.completed}/{task.total}",
             "•",
-            TimeRemainingColumn(),
+            # TimeRemainingColumn(),
             TimeElapsedColumn(),
             transient=True,
             expand=True,
