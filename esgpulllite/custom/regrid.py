@@ -149,7 +149,7 @@ def regrid_all_files_in_tree(
 
 class RegridderManager:
     # TODO: getting a esmf warning when trying to regrid the same (deleted file): have to restart code
-    def __init__(self, ds, fs=None, target_res=None, periodic=True):
+    def __init__(self, ds=None, fs=None, target_res=None, periodic=True):
         """
         ds: xarray.Dataset with native curvilinear ocean grid
         target_res: resolution as (lon_res, lat_res)

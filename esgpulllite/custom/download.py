@@ -13,6 +13,7 @@ from esgpulllite.custom import ui
 from esgpulllite.utils import format_size
 
 # parallel
+import concurrent.futures
 
 
 class DownloadSubset:
@@ -76,8 +77,14 @@ class DownloadSubset:
         )
 
         with ui.DownloadProgressUI(files_to_download) as ui_instance:
-            for file in files_to_download:
-                self._process_file_with_ui(file, ui_instance)
+            with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+                futures = [
+                    executor.submit(self._process_file_with_ui, file, ui_instance)
+                    for file in files_to_download
+                ]
+                for future in concurrent.futures.as_completed(futures):
+                    if self._shutdown_requested.is_set():
+                        break
             ui_instance.print_summary()
         end_time = time.localtime()
         console.print(f"\n:clock3: END: {time.strftime('%Y-%m-%d %H:%M:%S', end_time)}")
@@ -93,6 +100,8 @@ class DownloadSubset:
             if success:
                 ui_instance.set_status(file, "DONE", "green")
                 ui_instance.complete_file(file)
+                # Hide the file's progress bar after 5 seconds
+                self.hide_file_after_delay(file, ui_instance, 5)
             else:
                 ui_instance.set_status(file, "FAILED", "red")
                 ui_instance.complete_file(file)
@@ -144,10 +153,16 @@ class DownloadSubset:
             file_path.parent.mkdir(parents=True, exist_ok=True)
             if temp_path.exists():
                 temp_path.unlink()
+            total = int(response.headers.get("content-length", file.size or 0))
+            bytes_downloaded = 0
+            # Set the per-file progress bar total to the file size (if available)
+            ui_instance.update_file_progress(file, 0, total)
             with open(temp_path, "wb") as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     if chunk and not self._shutdown_requested.is_set():
                         f.write(chunk)
+                        bytes_downloaded += len(chunk)
+                        ui_instance.update_file_progress(file, bytes_downloaded, total)
             if temp_path.exists() and temp_path.stat().st_size > 0:
                 temp_path.rename(file_path)
                 return True
@@ -245,20 +260,20 @@ class DownloadSubset:
         return ds
 
     # Add a method to hide file after delay, called from main thread
-    def hide_file_after_delay(self, file, delay_seconds):
+    def hide_file_after_delay(self, file, ui_instance, delay_seconds):
         import threading
 
         def hide_file():
             time.sleep(delay_seconds)
             try:
-                if hasattr(self.ui_instance, "hide_file"):
-                    self.ui_instance.hide_file(file)
-                elif hasattr(self.ui_instance, "file_task_ids") and hasattr(
-                    self.ui_instance, "progress"
+                if hasattr(ui_instance, "hide_file"):
+                    ui_instance.hide_file(file)
+                elif hasattr(ui_instance, "file_task_ids") and hasattr(
+                    ui_instance, "progress"
                 ):
-                    task_id = self.ui_instance.file_task_ids.get(file.file_id)
+                    task_id = ui_instance.file_task_ids.get(file.file_id)
                     if task_id is not None:
-                        self.ui_instance.progress.update(task_id, visible=False)
+                        ui_instance.progress.update(task_id, visible=False)
             except Exception:
                 pass
 

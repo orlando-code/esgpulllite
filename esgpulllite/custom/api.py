@@ -3,7 +3,8 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
+from datetime import datetime, timezone
 
 from rich import print as rich_print
 
@@ -18,6 +19,8 @@ from esgpulllite.esgpuller import Esgpull
 from esgpulllite.graph import Graph
 from esgpulllite.models import File, Query
 from esgpulllite.tui import Verbosity
+from esgpulllite.utils import sync
+
 
 # Global flag for graceful shutdown
 _shutdown_requested = threading.Event()
@@ -100,7 +103,7 @@ class EsgpullAPI:
         query.compute_sha()
         self.esg.graph.resolve_require(query)
         results = self.esg.context.search(query, file=True, max_hits=max_hits)
-        return [r.asdict() for r in results]
+        return [cast(Dict[str, Any], r.asdict()) for r in results]
 
     def add(self, criteria: Dict[str, Any], track: bool = False) -> None:
         """
@@ -125,7 +128,7 @@ class EsgpullAPI:
                 facets=facets,
                 tags=tags + [f"name:{name}"] if name else tags,
                 require=None,
-                distrib=True,
+                distrib="true",
                 latest=None,
                 replica=None,
                 retracted=None,
@@ -276,7 +279,7 @@ class EsgpullAPI:
                 file.status = getattr(file, "status", None) or File.Status.Queued
                 self.esg.db.session.add(file)
                 self.esg.db.link(query=query, file=file)
-            query.updated_at = self.esg.context.now()
+            query.updated_at = datetime.now(timezone.utc)
             self.esg.db.session.add(query)
             self.esg.db.session.commit()
         self.esg.graph.merge()
@@ -300,13 +303,13 @@ class EsgpullAPI:
         files_to_download = self.esg.db.get_files_by_query(query, status=None)
         if not files_to_download:
             return []
-        downloaded_files, error_files = self.esg.sync(
+        downloaded_files, error_files = sync(
             self.esg.download(files_to_download, show_progress=False)
         )
         all_processed_files = downloaded_files + [
             err.data for err in error_files if hasattr(err, "data")
         ]
-        return [f.asdict() for f in all_processed_files]
+        return [cast(Dict[str, Any], f.asdict()) for f in all_processed_files]
 
     def list_queries(self) -> List[Dict[str, Any]]:
         """
@@ -363,6 +366,8 @@ def search_and_download(search_criteria, meta_criteria, API=None):
         return
 
     try:
+        if API is None:
+            API = api.EsgpullAPI()
         download_manager = download.DownloadSubset(
             files=files,
             fs=API.esg.fs,
@@ -494,34 +499,34 @@ def run():
                 if _shutdown_requested.is_set():
                     break
 
-            # Check if regridding should run (only if not interrupted)
-            if not _shutdown_requested.is_set() and META_CRITERIA_CONFIG.get(
-                "regrid", False
-            ):
-                rich_print("[blue]Regridding enabled, running regridding...[/blue]")
-                try:
-                    regrid.RegridderManager(
-                        fs=API.esg.fs,
-                        watch_dir=API.esg.fs.data,
-                    )
-                except KeyboardInterrupt:
-                    rich_print("[yellow]Regridding interrupted by user.[/yellow]")
-                except Exception as e:
-                    rich_print(f"[red]Regridding failed: {e}[/red]")
+            # # Check if regridding should run (only if not interrupted)
+            # if not _shutdown_requested.is_set() and META_CRITERIA_CONFIG.get(
+            #     "regrid", False
+            # ):
+            #     rich_print("[blue]Regridding enabled, running regridding...[/blue]")
+            #     try:
+            #         regrid.RegridderManager(
+            #             fs=API.esg.fs,
+            #             watch_dir=API.esg.fs.data,
+            #         )
+            #     except KeyboardInterrupt:
+            #         rich_print("[yellow]Regridding interrupted by user.[/yellow]")
+            #     except Exception as e:
+            #         rich_print(f"[red]Regridding failed: {e}[/red]")
 
-            if _shutdown_requested.is_set():
-                rich_print(
-                    "\n[bold green]✅ Graceful shutdown completed successfully.[/bold green]"
-                )
-                rich_print(
-                    "[dim]All downloads stopped cleanly. No data was lost.[/dim]"
-                )
-            else:
-                rich_print(
-                    "\n[bold green]✅ Processing completed successfully.[/bold green]"
-                ) if META_CRITERIA_CONFIG["process"] else rich_print(
-                    "\n[bold green]✅ No processing executed (none specified).[/bold green]"
-                )
+            # if _shutdown_requested.is_set():
+            #     rich_print(
+            #         "\n[bold green]✅ Graceful shutdown completed successfully.[/bold green]"
+            #     )
+            #     rich_print(
+            #         "[dim]All downloads stopped cleanly. No data was lost.[/dim]"
+            #     )
+            # else:
+            #     rich_print(
+            #         "\n[bold green]✅ Processing completed successfully.[/bold green]"
+            #     ) if META_CRITERIA_CONFIG["process"] else rich_print(
+            #         "\n[bold green]✅ No processing executed (none specified).[/bold green]"
+            #     )
 
         except KeyboardInterrupt:
             rich_print("[yellow]Main process interrupted.[/yellow]")

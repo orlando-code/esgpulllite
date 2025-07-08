@@ -1,21 +1,21 @@
 search_criteria:
   project: CMIP6
-  experiment_id: pdSST-pdSIC
-  # experiment_id: historical,ssp126,ssp585
+  # experiment_id: pdSST-pdSIC
+  experiment_id: historical,ssp126,ssp585
   # member_id: r1i1p1f1
-  # variable: tos,no3,rsdo,so,ph
+  variable: tos,no3,rsdo,so,ph
   # variable: tos,no3,rsdo,so
-  variable: tas
-  frequency: day
+  # variable: tas
+  # frequency: day
   # nominal_resolution: 25 km # TODO: handle searching for highest resolution, falling back to lower resolution if not available
   # nominal_resolution: 100 km # TODO: handle searching for highest resolution, falling back to lower resolution if not available
 
 meta_criteria:
-  limit: 10
+  limit: 15
   subset:
     lev: 0
   process: false
-  max_workers: 5
+  max_workers: 8
   delete_original: false
-  top_n: 3
+  top_n: 4
   # batch_size: 4

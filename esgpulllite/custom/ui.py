@@ -1,9 +1,12 @@
 # rich
 from rich.progress import (
     Progress,
-    # BarColumn,
-    # TimeRemainingColumn,
+    BarColumn,
     TimeElapsedColumn,
+    TextColumn,
+    DownloadColumn,
+    TransferSpeedColumn,
+    TimeRemainingColumn,
 )
 import logging
 from datetime import datetime
@@ -19,12 +22,11 @@ class DownloadProgressUI:
         self.files = files
         self.progress = Progress(
             "[progress.description]{task.description}",
-            # BarColumn(),
-            # "[progress.percentage]{task.percentage:>3.0f}%",
-            # "•",
-            "[progress.completed]{task.completed}/{task.total}",
-            "•",
-            # TimeRemainingColumn(),
+            BarColumn(),
+            "[progress.percentage]{task.percentage:>3.0f}%",
+            DownloadColumn(),
+            TransferSpeedColumn(),
+            TimeRemainingColumn(),
             TimeElapsedColumn(),
             transient=True,
             expand=True,
@@ -72,7 +74,9 @@ class DownloadProgressUI:
         for file in self.files:
             fname = file.filename
             desc = f"[white][PENDING] {fname}"
-            task_id = self.progress.add_task(desc, total=1, visible=True)
+            # Set total to file.size if available, else 1
+            total = getattr(file, "size", None) or 1
+            task_id = self.progress.add_task(desc, total=total, visible=True)
             self.file_task_ids[file.file_id] = task_id
             self.file_status[file.file_id] = "PENDING"
         return self
@@ -106,7 +110,8 @@ class DownloadProgressUI:
         # Advance overall progress and mark file bar as complete
         task_id = self.file_task_ids[file.file_id]
         self.progress.update(task_id, completed=self.progress.tasks[task_id].total)
-        self.progress.advance(self.overall_task)
+        if self.overall_task is not None:
+            self.progress.advance(self.overall_task)
 
     def update_file_progress(self, file, completed, total=None):
         task_id = self.file_task_ids[file.file_id]

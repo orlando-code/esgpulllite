@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from functools import cached_property, partial
 from pathlib import Path
 from warnings import warn
+from typing import Any, Optional
 
 from rich.live import Live
 from rich.progress import (
@@ -352,7 +353,7 @@ class Esgpull:
         queue: list[File],
         use_db: bool = True,
         show_progress: bool = True,
-        subset_criteria: dict[str, Any] = None,  # New parameter for filtering
+        subset_criteria: Optional[dict[str, Any]] = None,  # New parameter for filtering
     ) -> tuple[list[File], list[Err]]:
         """
         Download files provided in `queue`, optionally filtering by subset criteria.
