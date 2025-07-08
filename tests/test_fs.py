@@ -2,8 +2,8 @@ import asyncio
 
 import pytest
 
-from esgpull.config import Config
-from esgpull.fs import FileCheck, Filesystem
+from esgpulllite.config import Config
+from esgpulllite.fs import FileCheck, Filesystem
 
 
 @pytest.fixture

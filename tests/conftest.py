@@ -1,9 +1,9 @@
 import pytest
 
-from esgpull.config import Config
-from esgpull.constants import CONFIG_FILENAME
-from esgpull.install_config import InstallConfig
-from esgpull.models import File, FileStatus
+from esgpulllite.config import Config
+from esgpulllite.constants import CONFIG_FILENAME
+from esgpulllite.install_config import InstallConfig
+from esgpulllite.models import File, FileStatus
 
 
 @pytest.fixture

@@ -1,7 +1,7 @@
 import pytest
 
 from esgpull import Esgpull
-from esgpull.models import Query
+from esgpulllite.models import Query
 
 
 def test_insert_default_query(root):
@@ -18,13 +18,9 @@ def test_insert_default_query(root):
     ]
     for q in queries:
         q.compute_sha()
-    queries.append(
-        Query(require=queries[-1].sha, selection=dict(member_id="r1i1p1f1"))
-    )
+    queries.append(Query(require=queries[-1].sha, selection=dict(member_id="r1i1p1f1")))
     queries[-1].compute_sha()
-    queries.append(
-        Query(require=queries[-1].sha, selection=dict(table_id="Amon"))
-    )
+    queries.append(Query(require=queries[-1].sha, selection=dict(table_id="Amon")))
     queries[-1].compute_sha()
     new_queries = esg.insert_default_query(*queries)
     esg.graph.add(*new_queries)

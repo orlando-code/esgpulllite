@@ -1,9 +1,9 @@
 import pytest
 from httpx import HTTPStatusError
 
-from esgpull.auth import Auth, Credentials
+from esgpulllite.auth import Auth, Credentials
 
-# from esgpull.config import Config, Paths
+# from esgpulllite.config import Config, Paths
 
 
 @pytest.fixture

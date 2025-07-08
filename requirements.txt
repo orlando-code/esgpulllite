@@ -1,0 +1,11 @@
+# Core dependencies
+matplotlib>=3.0
+numpy>=1.0,<2.3  # Ensure compatibility with numba/xesmf
+xarray
+xesmf
+cdo
+rich
+pathlib
+
+# Development dependencies
+# Add any development-specific packages here

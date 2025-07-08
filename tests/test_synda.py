@@ -1,7 +1,7 @@
 import pytest
 
-from esgpull.models import SyndaFile
-from esgpull.models.file import FileStatus
+from esgpulllite.models import SyndaFile
+from esgpulllite.models.file import FileStatus
 
 synda_files_by_status = {
     FileStatus.Done: {

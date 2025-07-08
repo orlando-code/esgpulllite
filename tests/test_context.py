@@ -3,8 +3,8 @@ from time import perf_counter
 
 import pytest
 
-from esgpull.context import Context
-from esgpull.models import Query
+from esgpulllite.context import Context
+from esgpulllite.models import Query
 
 
 @pytest.fixture

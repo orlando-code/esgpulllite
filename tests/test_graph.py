@@ -1,8 +1,8 @@
 import pytest
 
-from esgpull.database import Database
-from esgpull.graph import Graph
-from esgpull.models import Query
+from esgpulllite.database import Database
+from esgpulllite.graph import Graph
+from esgpulllite.models import Query
 
 from .utils import dict_equals_ignore
 
@@ -270,9 +270,7 @@ def graph2():
         require=cmip6.sha, selection=dict(variable_id="pr"), tags=["children"]
     )
     cmip6_pr.compute_sha()
-    cmip6_pr_member = Query(
-        require=cmip6_pr.sha, selection=dict(member_id="r1i1p1f1")
-    )
+    cmip6_pr_member = Query(require=cmip6_pr.sha, selection=dict(member_id="r1i1p1f1"))
     cmip6_pr_member.compute_sha()
     graph.add(
         cordex,

@@ -1,7 +1,7 @@
 import pytest
 
-from esgpull.cli.utils import parse_facets
-from esgpull.models import Selection
+from esgpulllite.cli.utils import parse_facets
+from esgpulllite.models import Selection
 
 test_cases = [
     (["ocean", "temperature"], Selection(query=["ocean", "temperature"])),

@@ -1,7 +1,7 @@
 import pytest
 
-from esgpull.exceptions import AlreadySetFacet
-from esgpull.models import Query, Tag
+from esgpulllite.exceptions import AlreadySetFacet
+from esgpulllite.models import Query, Tag
 
 from .utils import dict_equals_ignore
 
@@ -38,9 +38,7 @@ def test_combine():
     ba_dict = (b << a).selection.asdict()
     abcd_dict = (a << b << c << d).asdict()
     dcba_dict = (d << c << b << a).asdict()
-    assert dict_equals_ignore(
-        ab_dict, ba_dict, ignore_keys=["added_at", "updated_at"]
-    )
+    assert dict_equals_ignore(ab_dict, ba_dict, ignore_keys=["added_at", "updated_at"])
     assert dict_equals_ignore(
         ab_dict,
         dict(project="CMIP6", mip_era="CMIP6"),

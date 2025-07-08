@@ -1,7 +1,7 @@
 import pytest
 
-from esgpull.exceptions import AlreadySetFacet, DuplicateFacet
-from esgpull.models import Selection
+from esgpulllite.exceptions import AlreadySetFacet, DuplicateFacet
+from esgpulllite.models import Selection
 
 
 @pytest.fixture

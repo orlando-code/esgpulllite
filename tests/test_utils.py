@@ -2,7 +2,7 @@ from datetime import datetime
 
 import pytest
 
-from esgpull.utils import format_date, format_date_iso, index2url, parse_date
+from esgpulllite.utils import format_date, format_date_iso, index2url, parse_date
 
 ESGF_INDEX = "esgf-node.ipsl.upmc.fr"
 ESGF_URL = "https://esgf-node.ipsl.upmc.fr/esg-search/search"
@@ -23,9 +23,7 @@ def test_format_date():
     fmt = "%Y-%m-%d"
     expected = "2022-01-01"
     assert format_date("2022-01-01", fmt=fmt) == expected
-    assert (
-        format_date(datetime(year=2022, month=1, day=1), fmt=fmt) == expected
-    )
+    assert format_date(datetime(year=2022, month=1, day=1), fmt=fmt) == expected
     with pytest.raises(ValueError):
         format_date("20220101", fmt=fmt)
     with pytest.raises(ValueError):

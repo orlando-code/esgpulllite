@@ -3,10 +3,10 @@ import asyncio
 import httpx
 import pytest
 
-from esgpull.fs import FileCheck, Filesystem
-from esgpull.models import File
-from esgpull.processor import Task
-from esgpull.result import Ok
+from esgpulllite.fs import FileCheck, Filesystem
+from esgpulllite.models import File
+from esgpulllite.processor import Task
+from esgpulllite.result import Ok
 
 
 @pytest.fixture
@@ -16,9 +16,7 @@ def smallfile():
         ".v20180803"
     )
     dataset_master, version = dataset_id.rsplit(".", 1)
-    filename = (
-        "cLitterLut_Eyr_IPSL-CM6A-LR_historical_r10i1p1f1_gr_1851-2015.nc"
-    )
+    filename = "cLitterLut_Eyr_IPSL-CM6A-LR_historical_r10i1p1f1_gr_1851-2015.nc"
     file_id = ".".join([dataset_id, filename])
     master_id = ".".join([dataset_master, filename])
     data_node = "vesg.ipsl.upmc.fr"
@@ -31,9 +29,7 @@ def smallfile():
             filename,
         ]
     )
-    checksum = (
-        "47958756e90cb6afcd20451dcd138b4ced1e1845afdd1ea12c1f962991da2f87"
-    )
+    checksum = "47958756e90cb6afcd20451dcd138b4ced1e1845afdd1ea12c1f962991da2f87"
     file = File(
         file_id=file_id,
         dataset_id=dataset_id,

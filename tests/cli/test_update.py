@@ -3,11 +3,11 @@ from time import perf_counter
 from click.testing import CliRunner
 
 from esgpull import Esgpull
-from esgpull.cli.add import add
-from esgpull.cli.config import config
-from esgpull.cli.self import install
-from esgpull.cli.update import update
-from esgpull.install_config import InstallConfig
+from esgpulllite.cli.add import add
+from esgpulllite.cli.config import config
+from esgpulllite.cli.self import install
+from esgpulllite.cli.update import update
+from esgpulllite.install_config import InstallConfig
 
 
 def test_fast_update(tmp_path):
@@ -82,9 +82,9 @@ def test_update_updates_timestamp(tmp_path):
     query = esg.graph.get(query_id)
 
     # Verify the timestamp was updated
-    assert query.updated_at > initial_timestamp, (
-        "updated_at timestamp was not updated after adding files"
-    )
+    assert (
+        query.updated_at > initial_timestamp
+    ), "updated_at timestamp was not updated after adding files"
 
     # Save the timestamp after files were added
     timestamp_after_update = query.updated_at
@@ -99,6 +99,6 @@ def test_update_updates_timestamp(tmp_path):
     query = esg.graph.get(query_id)
 
     # Verify the timestamp was NOT updated when no new files were added
-    assert query.updated_at == timestamp_after_update, (
-        "updated_at timestamp should not change when no new files are added"
-    )
+    assert (
+        query.updated_at == timestamp_after_update
+    ), "updated_at timestamp should not change when no new files are added"

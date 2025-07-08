@@ -2,8 +2,8 @@ import pytest
 import sqlalchemy as sa
 
 from esgpull import __version__
-from esgpull.database import Database
-from esgpull.models import Facet, FileStatus, sql
+from esgpulllite.database import Database
+from esgpulllite.models import Facet, FileStatus, sql
 
 
 @pytest.fixture

@@ -1,8 +1,8 @@
 import pytest
 import tomlkit
 
-from esgpull.config import Config
-from esgpull.exceptions import BadConfigError
+from esgpulllite.config import Config
+from esgpulllite.exceptions import BadConfigError
 
 
 def test_from_path(root):
