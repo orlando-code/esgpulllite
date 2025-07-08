@@ -1,11 +1,12 @@
 # general
 import re
+
 import pandas as pd
+from rich.console import Console
+from rich.panel import Panel
 
 # rich
 from rich.table import Table
-from rich.console import Console
-from rich.panel import Panel
 
 # custom
 from esgpulllite.custom import api, fileops
@@ -190,6 +191,10 @@ class SearchResults:
         search and saves."""
         if not self.search_criteria or not self.meta_criteria:
             self.load_config(fileops.read_yaml(fileops.REPO_ROOT / "search.yaml"))
+        print(
+            "[SearchResults] Running search with the following criteria:"
+            f"\n{self.search_criteria}\n{self.meta_criteria}"
+        )
         # Try to load from cache if available, else perform search and save
         try:
             self.search_id = self.clean_and_join_dict_vals()

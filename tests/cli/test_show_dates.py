@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 from click.testing import CliRunner
 
-from esgpull import Esgpull
+from esgpulllite importEsgpull
 from esgpulllite.cli.self import install
 from esgpulllite.cli.show import show
 from esgpulllite.install_config import InstallConfig

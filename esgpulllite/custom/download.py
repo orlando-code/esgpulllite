@@ -10,6 +10,7 @@ import requests
 import xarray as xa
 
 from esgpulllite.custom import ui
+from esgpulllite.utils import format_size
 
 # parallel
 
@@ -52,11 +53,9 @@ class DownloadSubset:
         return exists
 
     def run(self):
-        file_str = "files" if len(self.files) > 1 else "file"
         from rich.console import Console
 
         console = Console()
-        console.print(f"Attempting download of {len(self.files)} {file_str}...")
         start_time = time.localtime()
         console.print(
             f":clock3: START: {time.strftime('%Y-%m-%d %H:%M:%S', start_time)}\n"
@@ -66,8 +65,15 @@ class DownloadSubset:
         if not files_to_download:
             console.print("All files already exist, nothing to download.")
             return
+
+        # get total size of files to download
+        total_size = sum(file.size for file in files_to_download)
+
         dl_str = "file" if len(files_to_download) == 1 else "files"
-        console.print(f"Downloading {len(files_to_download)} new {dl_str}...")
+
+        console.print(
+            f"Downloading {len(files_to_download)} new {dl_str} [APPROX TOTAL: {format_size(total_size)}]..."
+        )
 
         with ui.DownloadProgressUI(files_to_download) as ui_instance:
             for file in files_to_download:
@@ -79,10 +85,11 @@ class DownloadSubset:
     def _process_file_with_ui(self, file, ui_instance):
         try:
             ui_instance.set_status(file, "STARTING", "cyan")
-            if self._is_direct_download_needed(file) or self.force_direct_download:
-                success = self._download_file_direct_ui(file, ui_instance)
-            else:
-                success = self._download_via_xarray_ui(file, ui_instance)
+            success = self._download_file_direct_ui(file, ui_instance)
+            # if self._is_direct_download_needed(file) or self.force_direct_download:
+            #     success = self._download_file_direct_ui(file, ui_instance)
+            # else:
+            #     success = self._download_via_xarray_ui(file, ui_instance)
             if success:
                 ui_instance.set_status(file, "DONE", "green")
                 ui_instance.complete_file(file)
@@ -113,7 +120,8 @@ class DownloadSubset:
                     for k, v in self.subset.items()
                     if k in ds.dims or k in ds.coords
                 }
-                ds = ds.isel(**subset_dims)
+                if subset_dims:
+                    ds = ds.isel(**subset_dims)
             ui_instance.set_status(file, "LOADING", "blue")
             ds.load()
             ui_instance.set_status(file, "SAVING", "yellow")

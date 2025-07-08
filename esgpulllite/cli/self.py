@@ -6,7 +6,7 @@ import click
 from click.exceptions import Abort, Exit
 from rich.table import Table
 
-from esgpull import Esgpull
+from esgpulllite import Esgpull
 from esgpulllite.cli.decorators import args, opts
 from esgpulllite.cli.utils import init_esgpull
 from esgpulllite.config import Config
@@ -223,7 +223,7 @@ def import_synda(
             prompt_title = "Enter synda database location"
             if sdt_home is not None:
                 esg.ui.print(
-                    "Found existing synda installation at" f" SDT_HOME={sdt_home}"
+                    f"Found existing synda installation at SDT_HOME={sdt_home}"
                 )
                 default = str(get_synda_db_path(sdt_home))
                 path = Path(esg.ui.prompt(prompt_title, default=str(default)))

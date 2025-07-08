@@ -22,6 +22,9 @@ def sync(
 
 
 def format_size(size: int) -> str:
+    """Convert a size in bytes to a human-readable format using binary prefixes.
+    The size is formatted with one decimal place and appropriate binary prefixes (kiB, MiB, etc.).
+    """
     return _to_str(
         size,
         ("kiB", "MiB", "GiB", "TiB", "PiB", "EiB", "ZiB", "YiB"),
@@ -48,9 +51,7 @@ def format_date(date: str | datetime.datetime, fmt: str = "%Y-%m-%d") -> str:
     return parse_date(date, fmt).strftime(fmt)
 
 
-def format_date_iso(
-    date: str | datetime.datetime, fmt: str = "%Y-%m-%d"
-) -> str:
+def format_date_iso(date: str | datetime.datetime, fmt: str = "%Y-%m-%d") -> str:
     return parse_date(date, fmt).replace(microsecond=0).isoformat() + "Z"
 
 

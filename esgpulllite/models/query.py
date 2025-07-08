@@ -14,7 +14,7 @@ from typing_extensions import NotRequired, TypedDict
 
 import esgpulllite.utils as utils
 
-# from esgpull import utils
+# from esgpulllite importutils
 from esgpulllite.exceptions import UntrackableQuery
 from esgpulllite.models.base import Base, Sha
 from esgpulllite.models.file import FileDict, FileStatus

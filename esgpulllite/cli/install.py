@@ -3,7 +3,7 @@
 # import click
 # from click.exceptions import Abort, Exit
 
-# from esgpull import Esgpull
+# from esgpulllite importEsgpull
 # from esgpulllite.cli.decorators import args, opts
 # from esgpulllite.cli.utils import load_facets
 # from esgpulllite.db.models import File

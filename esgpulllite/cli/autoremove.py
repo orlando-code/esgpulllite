@@ -1,7 +1,7 @@
 # import click
 # from click.exceptions import Abort, Exit
 
-# from esgpull import Esgpull
+# from esgpulllite importEsgpull
 # from esgpulllite.cli.decorators import opts
 # from esgpulllite.cli.utils import filter_docs, totable
 # from esgpulllite.tui import Verbosity

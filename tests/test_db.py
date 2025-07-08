@@ -1,7 +1,7 @@
 import pytest
 import sqlalchemy as sa
 
-from esgpull import __version__
+from esgpulllite import__version__
 from esgpulllite.database import Database
 from esgpulllite.models import Facet, FileStatus, sql
 

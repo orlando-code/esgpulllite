@@ -1,6 +1,6 @@
 import pytest
 
-from esgpull import Esgpull
+from esgpulllite importEsgpull
 from esgpulllite.models import Query
 
 

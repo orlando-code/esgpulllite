@@ -12,7 +12,7 @@ from rich.box import MINIMAL_DOUBLE_HEAD
 from rich.table import Table
 from rich.text import Text
 
-from esgpull import Esgpull
+from esgpulllite import Esgpull
 from esgpulllite.graph import Graph
 from esgpulllite.models import Dataset, File, Option, Options, Query, Selection
 from esgpulllite.tui import UI, TempUI, Verbosity, logger

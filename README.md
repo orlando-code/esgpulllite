@@ -7,7 +7,7 @@
 
 
 ```py
-from esgpull import Esgpull, Query
+from esgpulllite importEsgpull, Query
 
 query = Query()
 query.selection.project = "CMIP6"

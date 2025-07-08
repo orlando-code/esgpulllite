@@ -2,7 +2,7 @@ from time import perf_counter
 
 from click.testing import CliRunner
 
-from esgpull import Esgpull
+from esgpulllite importEsgpull
 from esgpulllite.cli.add import add
 from esgpulllite.cli.config import config
 from esgpulllite.cli.self import install

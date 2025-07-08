@@ -1,23 +1,23 @@
-from pathlib import Path
-from typing import Any, Optional, List, Dict
 import signal
 import sys
 import threading
 import time
-from esgpulllite.esgpuller import Esgpull
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from rich import print as rich_print
+
 from esgpulllite.cli.utils import (
     parse_query,
     serialize_queries_from_file,
 )
-from esgpulllite.tui import Verbosity
-from esgpulllite.graph import Graph
-from esgpulllite.models import Query
-from esgpulllite.models import File
 
 # custom
-from esgpulllite.custom import search, download, regrid, fileops, api
-from rich import print as rich_print
-
+from esgpulllite.custom import api, download, fileops, regrid, search
+from esgpulllite.esgpuller import Esgpull
+from esgpulllite.graph import Graph
+from esgpulllite.models import File, Query
+from esgpulllite.tui import Verbosity
 
 # Global flag for graceful shutdown
 _shutdown_requested = threading.Event()
@@ -373,10 +373,11 @@ def search_and_download(search_criteria, meta_criteria, API=None):
 
         # Pass shutdown event to download manager
         download_manager._shutdown_requested = _shutdown_requested
+        file_str = "files" if len(files) > 1 else "file"
 
         # Show download start message with interrupt info
         rich_print(
-            f"[blue]📥 Starting download of {len(files)} files... (Ctrl+C to stop gracefully)[/blue]"
+            f"[blue]📥 Attempting download of {len(files)} {file_str}... (Ctrl+C to stop gracefully)[/blue]"
         )
         download_manager.run()
 
@@ -416,9 +417,9 @@ def run():
             )
 
             REPO_ROOT = fileops.get_repo_root()
-            CRITERIA_FP = fileops.read_yaml(REPO_ROOT / "search.yaml")
-            SEARCH_CRITERIA_CONFIG = CRITERIA_FP.get("search_criteria", {})
-            META_CRITERIA_CONFIG = CRITERIA_FP.get("meta_criteria", {})
+            CRITERIA_DICT = fileops.read_yaml(REPO_ROOT / "search.yaml")
+            SEARCH_CRITERIA_CONFIG = CRITERIA_DICT.get("search_criteria", {})
+            META_CRITERIA_CONFIG = CRITERIA_DICT.get("meta_criteria", {})
             API = api.EsgpullAPI()
 
             # remove any existing .part files in the main directory to avoid conflicts
@@ -518,6 +519,8 @@ def run():
             else:
                 rich_print(
                     "\n[bold green]✅ Processing completed successfully.[/bold green]"
+                ) if META_CRITERIA_CONFIG["process"] else rich_print(
+                    "\n[bold green]✅ No processing executed (none specified).[/bold green]"
                 )
 
         except KeyboardInterrupt:
