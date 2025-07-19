@@ -3,7 +3,6 @@ from rich.progress import (
     Progress,
     BarColumn,
     TimeElapsedColumn,
-    TextColumn,
     DownloadColumn,
     TransferSpeedColumn,
     TimeRemainingColumn,
@@ -12,7 +11,7 @@ import logging
 from datetime import datetime
 
 # custom
-from esgpulllite.custom import fileops
+from esgpulllite.custom import config
 
 
 class DownloadProgressUI:
@@ -50,7 +49,7 @@ class DownloadProgressUI:
         self.logger.setLevel(logging.ERROR)
 
         # Create logs directory next to the current file
-        log_dir = fileops.get_repo_root() / "logs"
+        log_dir = config.log_dir
         log_dir.mkdir(exist_ok=True)
 
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
