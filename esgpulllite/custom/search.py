@@ -1,5 +1,6 @@
 # general
 import re
+from typing import Optional
 
 import pandas as pd
 from rich.console import Console
@@ -23,7 +24,7 @@ class SearchResults:
         self,
         search_criteria: dict,
         meta_criteria: dict,
-        config_path: str = None,
+        config_path: Optional[str] = None,
     ):
         self.search_criteria = search_criteria
         self.meta_criteria = meta_criteria
@@ -47,6 +48,7 @@ class SearchResults:
     def do_search(self) -> None:
         """Perform a search using the provided criteria and populate results."""
         api_instance = api.EsgpullAPI()
+        # TODO: ERROR IN SEARCH, NOT FINDING ANY FILES
         results = api_instance.search(criteria=self.search_criteria)
         self.results_df = pd.DataFrame(results)
         if "_sa_instance_state" in self.results_df.columns:
@@ -71,7 +73,7 @@ class SearchResults:
         )
         # Update self.search_results to match the sorted DataFrame
         self.search_results = [
-            File(**{k: v for k, v in row.items() if k != "_sa_instance_state"})
+            File(**dict({k: v for k, v in row.items() if k != "_sa_instance_state"}))
             for _, row in self.results_df.iterrows()
         ]
 
@@ -120,7 +122,7 @@ class SearchResults:
                 Panel(msg, title="[green]Search Results", border_style="green")
             )
 
-    def get_top_n(self) -> pd.DataFrame:
+    def get_top_n(self) -> pd.DataFrame | pd.Series:
         """
         Return all files associated with the top n groups,
         where groups are defined by ['institution_id', 'source_id', 'experiment_id'].
@@ -129,7 +131,7 @@ class SearchResults:
             raise ValueError("No results to select from. Run do_search() first.")
 
         top_dataset_ids = self.results_df.drop_duplicates("dataset_id").head(
-            self.top_n
+            self.top_n if self.top_n else 3
         )["dataset_id"]
         return self.results_df[self.results_df["dataset_id"].isin(top_dataset_ids)]
 
@@ -179,7 +181,7 @@ class SearchResults:
                 self.results_df = self.results_df.drop(columns=["_sa_instance_state"])
             self.search_results_fp = search_fp
             self.search_results = [
-                File(**{k: v for k, v in row.items() if k != "_sa_instance_state"})
+                File(**dict({k: v for k, v in row.items() if k != "_sa_instance_state"}))
                 for _, row in self.results_df.iterrows()
             ]
             return self.results_df
@@ -204,7 +206,7 @@ class SearchResults:
         except Exception:
             self.search_message("pre")
             self.do_search()
-            if self.results_df.empty:
+            if self.results_df is not None and self.results_df.empty:
                 print("[SearchResults] No results found for given criteria.")
                 return []
             self.search_message("post")
@@ -213,6 +215,6 @@ class SearchResults:
         # Always get top_n from the current results_df
         top_n_df = self.get_top_n() if self.top_n else self.results_df
         # limit
-        if self.meta_criteria.get("limit", None):
+        if self.meta_criteria.get("limit", None) and top_n_df is not None:
             top_n_df = top_n_df.head(self.meta_criteria["limit"])
-        return [File(**row) for _, row in top_n_df.iterrows()]
+        return [File(**dict(row)) for _, row in top_n_df.iterrows()]
